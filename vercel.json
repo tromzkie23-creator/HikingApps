@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "trailhead-api/api/**/*.ts": {
+      "runtime": "nodejs22.x"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/trailhead-api/api/$1"
+    }
+  ]
+}
