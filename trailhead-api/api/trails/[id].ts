@@ -1,4 +1,5 @@
 import { db } from '../../lib/db.js';
+import { getTrailRating } from '../../lib/reviews.js';
 import {
   handleOptions,
   methodNotAllowed,
@@ -16,7 +17,7 @@ export default async function trail(request: ApiRequest, response: ApiResponse) 
   if (typeof id !== 'string' || !id) return response.status(400).json({ error: 'A trail ID is required.' });
 
   try {
-    const [trailResult, waypointResult] = await Promise.all([
+    const [trailResult, waypointResult, rating] = await Promise.all([
       db.execute({
         sql: 'SELECT id, name, area, km, gain, level, description, path_json, elevation_json FROM trails WHERE id = ? LIMIT 1',
         args: [id],
@@ -25,6 +26,7 @@ export default async function trail(request: ApiRequest, response: ApiResponse) 
         sql: 'SELECT id, name, type, km, lat, lng FROM waypoints WHERE trail_id = ? ORDER BY km',
         args: [id],
       }),
+      getTrailRating(id),
     ]);
     const row = trailResult.rows[0];
     if (!row) return response.status(404).json({ error: 'Trail not found.' });
@@ -40,6 +42,7 @@ export default async function trail(request: ApiRequest, response: ApiResponse) 
         description: String(row.description),
         path: JSON.parse(String(row.path_json)),
         elevation: JSON.parse(String(row.elevation_json)),
+        ...rating,
         waypoints: waypointResult.rows.map((waypoint) => ({
           id: String(waypoint.id),
           name: String(waypoint.name),

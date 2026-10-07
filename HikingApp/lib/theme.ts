@@ -35,4 +35,6 @@ export type Trail = {
   desc: string;
   elev: number[];
   wps: TrailWaypoint[];
+  ratingAverage?: number;
+  ratingCount?: number;
 };

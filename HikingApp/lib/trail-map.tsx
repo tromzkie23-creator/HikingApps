@@ -43,6 +43,7 @@ type TrailMapProps = {
   trail: Trail;
   showGuide?: boolean;
   onLocation?: (coordinate: Coordinate) => void;
+  fullScreen?: boolean;
 };
 
 const layers: Layer[] = ['Standard', 'Terrain', 'Satellite'];
@@ -61,7 +62,7 @@ function distanceInMeters(first: Coordinate, second: Coordinate) {
 
 function formatDistance(meters: number) {
   const kilometers = meters / 1000;
-  return kilometers < 1 ? `${Math.round(meters)} m` : `${kilometers.toFixed(1)} km`;
+  return `${kilometers.toFixed(kilometers < 1 ? 2 : 1)} km`;
 }
 
 function formatDuration(seconds: number) {
@@ -71,7 +72,7 @@ function formatDuration(seconds: number) {
   return hours ? `${hours} hr ${remainingMinutes} min` : `${minutes} min`;
 }
 
-export function TrailMap({ trail, showGuide = false, onLocation }: TrailMapProps) {
+export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = false }: TrailMapProps) {
   const mapRef = useRef<MapView>(null);
   const locationRef = useRef<Coordinate | null>(null);
   const routeRef = useRef<HikingRoute | null>(null);
@@ -352,8 +353,8 @@ export function TrailMap({ trail, showGuide = false, onLocation }: TrailMapProps
     : routeMessage;
 
   return (
-    <View>
-      <View style={styles.searchRow}>
+    <View style={fullScreen ? styles.fullMapRoot : undefined}>
+      <View style={[styles.searchRow, fullScreen && styles.fullSearchRow]}>
         <TextInput
           accessibilityLabel="Search any destination in the world"
           value={query}
@@ -378,7 +379,7 @@ export function TrailMap({ trail, showGuide = false, onLocation }: TrailMapProps
       </View>
       {!!searchMessage && <Text style={styles.searchMessage}>{searchMessage}</Text>}
 
-      <View style={styles.layerRow}>
+      <View style={[styles.layerRow, fullScreen && styles.fullLayerRow]}>
         {layers.map((item) => {
           const selected = item === layer;
           return (
@@ -394,7 +395,7 @@ export function TrailMap({ trail, showGuide = false, onLocation }: TrailMapProps
         })}
       </View>
 
-      <View style={styles.mapFrame}>
+      <View style={[styles.mapFrame, fullScreen && styles.fullMapFrame]}>
         <MapView
           ref={mapRef}
           style={StyleSheet.absoluteFill}
@@ -462,9 +463,18 @@ export function TrailMap({ trail, showGuide = false, onLocation }: TrailMapProps
           style={styles.centerButton}>
           <Text style={styles.centerButtonText}>◎</Text>
         </Pressable>
+        {fullScreen && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Reset map compass to north"
+            onPress={() => mapRef.current?.animateCamera({ heading: 0, pitch: 0 })}
+            style={[styles.centerButton, styles.compassButton]}>
+            <Text style={styles.centerButtonText}>N</Text>
+          </Pressable>
+        )}
       </View>
 
-      <Text style={styles.attribution}>
+      <Text style={[styles.attribution, fullScreen && styles.fullAttribution]}>
         © OpenStreetMap contributors · Terrain © OpenTopoMap · Directions © openrouteservice.org
       </Text>
       {!!locationMessage && <Text style={styles.errorMessage}>{locationMessage}</Text>}
@@ -531,10 +541,22 @@ export function TrailMap({ trail, showGuide = false, onLocation }: TrailMapProps
 }
 
 const styles = StyleSheet.create({
+  fullMapRoot: {
+    flex: 1,
+    minHeight: 400,
+  },
   searchRow: {
     flexDirection: 'row',
     gap: 8,
     marginTop: 14,
+  },
+  fullSearchRow: {
+    position: 'absolute',
+    top: 54,
+    left: 16,
+    right: 16,
+    zIndex: 2,
+    marginTop: 0,
   },
   searchInput: {
     flex: 1,
@@ -571,6 +593,14 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 9,
   },
+  fullLayerRow: {
+    position: 'absolute',
+    top: 106,
+    left: 16,
+    zIndex: 2,
+    marginTop: 0,
+    marginBottom: 0,
+  },
   layerButton: {
     borderRadius: 16,
     borderWidth: 1,
@@ -597,6 +627,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: '#DDE6CF',
   },
+  fullMapFrame: {
+    flex: 1,
+    minHeight: 400,
+    height: undefined,
+    borderRadius: 0,
+  },
   centerButton: {
     position: 'absolute',
     right: 12,
@@ -619,10 +655,22 @@ const styles = StyleSheet.create({
     lineHeight: 32,
     fontWeight: '700',
   },
+  compassButton: {
+    bottom: 62,
+  },
   attribution: {
     color: C.mute,
     fontSize: 9,
     marginTop: 5,
+  },
+  fullAttribution: {
+    position: 'absolute',
+    bottom: 5,
+    left: 8,
+    zIndex: 2,
+    marginTop: 0,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    paddingHorizontal: 4,
   },
   errorMessage: {
     color: C.ember,

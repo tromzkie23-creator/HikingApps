@@ -40,10 +40,31 @@ CREATE TABLE IF NOT EXISTS hike_logs (
   synced_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS favorites (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (user_id, trail_id)
+);
+
+CREATE TABLE IF NOT EXISTS reviews (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  UNIQUE (user_id, trail_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_hike_logs_user_started
   ON hike_logs(user_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_waypoints_trail_km
   ON waypoints(trail_id, km);
+CREATE INDEX IF NOT EXISTS idx_favorites_user
+  ON favorites(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reviews_trail_created
+  ON reviews(trail_id, created_at DESC);
 
 INSERT OR IGNORE INTO trails
   (id, name, area, km, gain, level, description, path_json, elevation_json)

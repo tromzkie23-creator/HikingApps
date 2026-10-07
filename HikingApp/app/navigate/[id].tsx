@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, Text, TextInput, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 
 import { ApiError, getToken, getTrail, saveGuestHike, saveHike } from '../../lib/api';
@@ -31,8 +32,16 @@ export default function Navigate() {
   const [distance, setDistance] = useState(0);
   const [gps, setGps] = useState('Waiting for GPS');
   const [saving, setSaving] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const [waypointName, setWaypointName] = useState('');
+  const [addedWaypoints, setAddedWaypoints] = useState<string[]>([]);
   const lastLocation = useRef<Coordinate | null>(null);
   const startedAt = useRef(new Date().toISOString());
+
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
 
   useEffect(() => {
     let active = true;
@@ -65,18 +74,29 @@ export default function Navigate() {
   }, [id]);
 
   useEffect(() => {
+    if (paused) return;
     const interval = setInterval(() => setSeconds((value) => value + 1), 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [paused]);
 
   const handleLocation = useCallback((coordinate: Coordinate) => {
     setGps('GPS active');
-    if (lastLocation.current) {
+    if (!pausedRef.current && lastLocation.current) {
       const segmentDistance = distanceInKm(lastLocation.current, coordinate);
       if (segmentDistance < 0.2) setDistance((value) => value + segmentDistance);
     }
     lastLocation.current = coordinate;
   }, []);
+
+  function addWaypoint() {
+    const name = waypointName.trim();
+    if (!name) {
+      Alert.alert('Name your waypoint', 'Enter a short label before adding a waypoint.');
+      return;
+    }
+    setAddedWaypoints((current) => [...current, `${name} · ${distance.toFixed(2)} km`]);
+    setWaypointName('');
+  }
 
   async function finishHike() {
     if (!trail || saving) return;
@@ -98,7 +118,7 @@ export default function Navigate() {
           'Guest hike finished',
           'Your hike was saved on this device. Sign in when the API is available to sync hikes to your account.'
         );
-        router.replace('/(tabs)/history' as Href);
+        router.replace('/(tabs)/profile' as Href);
         return;
       }
       await saveHike({
@@ -108,7 +128,7 @@ export default function Navigate() {
         startedAt: startedAt.current,
       });
       Alert.alert('Hike saved', 'Your hike was saved to your Trailhead account.');
-      router.replace('/(tabs)/history' as Href);
+      router.replace('/(tabs)/profile' as Href);
     } catch (cause) {
       const message = cause instanceof ApiError ? cause.message : 'Could not save this hike. Please try again.';
       Alert.alert('Could not save hike', message);
@@ -138,40 +158,77 @@ export default function Navigate() {
   const hours = String(Math.floor(seconds / 3600)).padStart(2, '0');
   const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
   const remainingSeconds = String(seconds % 60).padStart(2, '0');
+  const estimatedClimb = Math.min(trail.gain, Math.round((distance / trail.km) * trail.gain));
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: C.spruce }}
-      contentContainerStyle={{ padding: 20, paddingTop: 56, paddingBottom: 28 }}>
-      <Text style={{ color: '#BFD3B0' }}>{trail.name}</Text>
-      {usingOfflineTrail && (
-        <Text style={{ color: '#BFD3B0', marginTop: 8 }}>
-          Using built-in trail details. Saving this hike requires an online account.
-        </Text>
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <TrailMap trail={trail} fullScreen onLocation={handleLocation} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="More hike options"
+        onPress={() => Alert.alert('Hike options', `${gps}${usingOfflineTrail ? '\nUsing built-in trail details.' : ''}`)}
+        style={{ position: 'absolute', top: 220, right: 16, width: 43, height: 43, borderRadius: 22, backgroundColor: C.white, alignItems: 'center', justifyContent: 'center', elevation: 3 }}>
+        <Ionicons name="ellipsis-horizontal" size={23} color={C.spruce} />
+      </Pressable>
+
+      <View style={{ position: 'absolute', top: 166, left: 16, right: 70, backgroundColor: C.white, borderRadius: 16, padding: 14, elevation: 4 }}>
+        <Text style={{ color: C.moss, fontSize: 10, fontWeight: '900', letterSpacing: 1 }}>ON ROUTE {paused ? '· PAUSED' : ''}</Text>
+        <Text numberOfLines={1} style={{ color: C.ink, fontSize: 16, fontWeight: '800', marginTop: 5 }}>{nextWaypoint.name}</Text>
+        <Text style={{ color: C.mute, fontSize: 12, marginTop: 2 }}>{Math.max(0, nextWaypoint.km - distance).toFixed(1)} km to next waypoint</Text>
+      </View>
+
+      {!!usingOfflineTrail && (
+        <View style={{ position: 'absolute', top: 276, left: 16, right: 16, backgroundColor: '#FFF9E9', padding: 9, borderRadius: 10 }}>
+          <Text style={{ color: C.mute, fontSize: 11 }}>Using built-in trail details. Hike data saves on this device as a guest.</Text>
+        </View>
       )}
-      <Text style={{ color: C.white, fontSize: 48, fontWeight: '800', marginTop: 5 }}>
-        {hours}:{minutes}:{remainingSeconds}
-      </Text>
-      <Text style={{ color: C.white, fontSize: 19 }}>
-        {distance.toFixed(2)} km of {trail.km} km
-      </Text>
-      <Text style={{ color: '#BFD3B0', marginTop: 5 }}>{gps}</Text>
 
-      <TrailMap trail={trail} showGuide onLocation={handleLocation} />
-
-      <View style={{ backgroundColor: C.white, borderRadius: 14, padding: 16, marginTop: 15 }}>
-        <Text style={{ color: C.mute }}>Next trail waypoint</Text>
-        <Text style={{ fontSize: 18, fontWeight: '700', color: C.ink, marginTop: 4 }}>
-          {nextWaypoint.name}
-        </Text>
-        <Text style={{ color: C.ink, marginTop: 4 }}>
-          {Math.max(0, nextWaypoint.km - distance).toFixed(1)} km ahead
-        </Text>
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: C.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 24 }}>
+        <View style={{ alignSelf: 'center', width: 38, height: 4, borderRadius: 3, backgroundColor: C.line, marginBottom: 12 }} />
+        <Text numberOfLines={1} style={{ color: C.mute, fontSize: 12, fontWeight: '700' }}>{trail.name} · {gps}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, marginBottom: 17 }}>
+          <View>
+            <Text style={{ color: C.ink, fontSize: 28, fontWeight: '900' }}>{hours}:{minutes}:{remainingSeconds}</Text>
+            <Text style={{ color: C.mute, fontSize: 10 }}>MOVING TIME</Text>
+          </View>
+          <View>
+            <Text style={{ color: C.ink, fontSize: 24, fontWeight: '900' }}>{distance.toFixed(2)} km</Text>
+            <Text style={{ color: C.mute, fontSize: 10 }}>DISTANCE</Text>
+          </View>
+          <View>
+            <Text style={{ color: C.ink, fontSize: 24, fontWeight: '900' }}>{estimatedClimb} m</Text>
+            <Text style={{ color: C.mute, fontSize: 10 }}>CLIMB · EST.</Text>
+          </View>
+        </View>
+        {!!addedWaypoints.length && (
+          <Text numberOfLines={2} style={{ color: C.mute, fontSize: 11, marginBottom: 10 }}>
+            Added: {addedWaypoints.join('  ·  ')}
+          </Text>
+        )}
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <View style={{ flex: 1 }}>
+            <Btn alt t={paused ? 'Resume' : 'Pause'} onPress={() => setPaused((current) => !current)} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Btn t={saving ? 'Saving…' : 'Finish hike'} onPress={() => void finishHike()} />
+          </View>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+          <TextInput
+            accessibilityLabel="Waypoint name"
+            value={waypointName}
+            onChangeText={setWaypointName}
+            placeholder="Add a waypoint"
+            placeholderTextColor={C.mute}
+            style={{ flex: 1, backgroundColor: C.bg, borderRadius: 11, paddingHorizontal: 12, color: C.ink, minHeight: 44 }}
+          />
+          <Pressable accessibilityRole="button" onPress={addWaypoint} style={{ flexDirection: 'row', gap: 6, backgroundColor: '#E3EBDD', borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 13 }}>
+            <Ionicons name="add-circle-outline" size={18} color={C.spruce} />
+            <Text style={{ color: C.spruce, fontWeight: '800', fontSize: 12 }}>Waypoint</Text>
+          </Pressable>
+        </View>
+        {saving && <ActivityIndicator color={C.spruce} style={{ marginTop: 8 }} />}
       </View>
-      <View style={{ marginTop: 16 }}>
-        <Btn alt t={saving ? 'Saving hike…' : 'Finish hike'} onPress={() => void finishHike()} />
-        {saving && <ActivityIndicator color={C.white} style={{ marginTop: 10 }} />}
-      </View>
-    </ScrollView>
+    </View>
   );
 }

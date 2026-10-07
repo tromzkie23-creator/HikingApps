@@ -1,6 +1,6 @@
 # Trailhead API
 
-Vercel serverless API backed by Turso/libSQL. Deploy this folder as its own Vercel project, separate from the Expo app.
+Vercel serverless API backed by Turso/libSQL. The repository-root Vercel project builds this backend from `trailhead-api/` while leaving the Vercel Root Directory empty.
 
 ## Routes
 
@@ -10,8 +10,22 @@ Vercel serverless API backed by Turso/libSQL. Deploy this folder as its own Verc
 | POST | `/api/login` | No | Verify password and return JWT |
 | GET | `/api/trails` | No | List trails |
 | GET | `/api/trails/:id` | No | Trail and waypoints |
+| GET, POST | `/api/trails/:id/reviews` | POST requires login | Read trail reviews and rating; submit a review |
+| GET, POST, DELETE | `/api/favorites` | Yes | Read, save, or remove the current user's saved trails |
+| GET | `/api/stats` | Yes | Current user's hiking totals and personal bests |
 | POST | `/api/hikes` | Bearer JWT | Save a completed hike |
 | GET | `/api/hikes` | Bearer JWT | Current user's hike history |
+
+## Apply schema changes to an existing Turso database
+
+From the repository root, first confirm that the Turso CLI is connected to the existing database, then apply the idempotent schema:
+
+```powershell
+turso db show hikingdatabase
+Get-Content .\trailhead-api\schema.sql -Raw | turso db shell hikingdatabase
+```
+
+The schema uses `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, and `INSERT OR IGNORE`; rerunning it adds the favorites and reviews tables without dropping tables, deleting rows, or duplicating the sample trail data. It does not require changing any Vercel environment variables.
 
 ## Create and seed Turso
 
@@ -44,11 +58,11 @@ Set each prompted value. `JWT_SECRET` must be a random secret at least 32 charac
 
 ## Deploy to Vercel
 
-1. In the Vercel project settings, set **Root Directory** to `trailhead-api` (not the repository root). For an existing project, save the changed root directory before redeploying.
-2. Add `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `JWT_SECRET` under **Project Settings → Environment Variables** for Preview and Production.
-3. Redeploy. The files under `api/` are discovered as Vercel functions only when `trailhead-api` is the project root.
-4. In the Expo project root, copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_BASE_URL` to the deployed origin, for example `https://trailhead-api-your-team.vercel.app` (no trailing slash). Restart Expo so the public variable is embedded. This URL is public; never place the Turso token or JWT signing secret in the Expo app.
-5. Verify `https://<deployment>/api/trails` returns JSON with a `trails` array. A Vercel/Express HTML 404 such as “Cannot GET /api/trails” means the deployment is not using this folder as its root. A POST to `/api/login` with an empty JSON body should return a JSON validation error, not an HTML page.
+1. Keep the Vercel project's **Root Directory** empty so it uses the repository root. The root `vercel.json` builds the TypeScript handlers under `trailhead-api/api/` and routes the public `/api/*` endpoints to them.
+2. Add `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `JWT_SECRET` under **Project Settings → Environment Variables** for Preview and Production. `JWT_SECRET` must be a random secret at least 32 characters long. Never put backend secrets in the Expo app or commit them.
+3. Redeploy the project. Vercel installs the backend's production dependencies from `trailhead-api/package-lock.json`.
+4. In the Expo project root, set `EXPO_PUBLIC_API_BASE_URL` to the deployed origin, for example `https://trailhead-api-your-team.vercel.app` (no trailing slash), and restart Expo. This URL is public; never place the Turso token or JWT signing secret in the Expo app.
+5. Verify `https://<deployment>/api/trails` returns JSON with a `trails` array. A POST to `/api/login` with an empty JSON body should return a JSON validation error, not an HTML page.
 
 ## App packages
 

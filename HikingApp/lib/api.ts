@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 
+import { getOfflineTrails } from './offline-trails';
 import type { Coordinate, Trail, TrailWaypoint } from './theme';
 
 export const API_BASE_URL =
@@ -8,11 +9,43 @@ export const API_BASE_URL =
 const TOKEN_KEY = 'trailhead.jwt';
 const USER_KEY = 'trailhead.user';
 const GUEST_HIKES_KEY = 'trailhead.guest-hikes';
+const FAVORITES_KEY = 'trailhead.favorite-trails';
 
 export type SessionUser = {
   id: string;
   name: string;
   email: string;
+};
+
+export type TrailReview = {
+  id: string;
+  rating: number;
+  comment: string;
+  createdAt: string;
+  reviewer: string;
+};
+
+export type TrailReviewsResponse = {
+  reviews: TrailReview[];
+  ratingAverage: number;
+  ratingCount: number;
+};
+
+export type TrailStats = {
+  year: number;
+  lifetime: {
+    hikes: number;
+    distanceKm: number;
+    movingTimeSecs: number;
+    caloriesEstimate: number;
+  };
+  monthlyDistance: { month: number; distanceKm: number }[];
+  personalBests: {
+    longestHike: { distanceKm: number; trailId: string; trail: string } | null;
+    mostClimb: { estimatedGainM: number; trailId: string; trail: string } | null;
+    longestTime: { durationSecs: number; trailId: string; trail: string } | null;
+    calories: { caloriesEstimate: number; trailId: string; trail: string } | null;
+  };
 };
 
 export type HikeHistoryItem = {
@@ -22,6 +55,8 @@ export type HikeHistoryItem = {
   km: number;
   time: string;
   synced: boolean;
+  startedAt?: string;
+  durationSecs?: number;
 };
 
 function isGuestHike(value: unknown): value is HikeHistoryItem {
@@ -37,6 +72,28 @@ function isGuestHike(value: unknown): value is HikeHistoryItem {
   );
 }
 
+async function getLocalFavoriteTrailIds(): Promise<string[]> {
+  const raw = await SecureStore.getItemAsync(FAVORITES_KEY);
+  if (!raw) return [];
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (Array.isArray(value) && value.every((id) => typeof id === 'string')) return value;
+    await SecureStore.deleteItemAsync(FAVORITES_KEY);
+    return [];
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      await SecureStore.deleteItemAsync(FAVORITES_KEY);
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function saveLocalFavoriteTrailIds(ids: string[]) {
+  await SecureStore.setItemAsync(FAVORITES_KEY, JSON.stringify(ids));
+  return ids;
+}
+
 type ApiTrail = {
   id: string;
   name: string;
@@ -47,6 +104,8 @@ type ApiTrail = {
   description: string;
   path: Coordinate[];
   elevation: number[];
+  rating_average?: number;
+  rating_count?: number;
   waypoints?: {
     id: string;
     name: string;
@@ -193,6 +252,8 @@ export async function saveGuestHike(input: {
     km: input.distanceKm,
     time: hours ? `${hours}h ${minutes}m` : `${minutes}m`,
     synced: false,
+    startedAt: input.startedAt,
+    durationSecs: input.durationSecs,
   };
   const hikes = await getGuestHikes();
   await SecureStore.setItemAsync(GUEST_HIKES_KEY, JSON.stringify([hike, ...hikes].slice(0, 5)));
@@ -247,6 +308,8 @@ function toTrail(row: ApiTrail): Trail {
     latitude: row.path[0]?.latitude ?? 0,
     longitude: row.path[0]?.longitude ?? 0,
     path: row.path,
+    ratingAverage: row.rating_average,
+    ratingCount: row.rating_count,
     wps: (row.waypoints ?? []).map((waypoint) => ({
       name: waypoint.name,
       type: waypoint.type,
@@ -264,6 +327,143 @@ export async function getTrails() {
 export async function getTrail(id: string) {
   const response = await request<{ trail: ApiTrail }>(`/api/trails/${encodeURIComponent(id)}`);
   return toTrail(response.trail);
+}
+
+export async function getFavoriteTrailIds(): Promise<string[]> {
+  if (!(await getToken())) return getLocalFavoriteTrailIds();
+  const response = await request<{ favorites: string[] }>('/api/favorites', {}, true);
+  return response.favorites;
+}
+
+export async function toggleFavoriteTrail(id: string): Promise<string[]> {
+  const favorites = await getFavoriteTrailIds();
+  const shouldFavorite = !favorites.includes(id);
+  if (!(await getToken())) {
+    return saveLocalFavoriteTrailIds(
+      shouldFavorite ? [...favorites, id] : favorites.filter((favoriteId) => favoriteId !== id)
+    );
+  }
+
+  await request<{ trail_id: string; favorited: boolean }>(
+    shouldFavorite ? '/api/favorites' : `/api/favorites?trail_id=${encodeURIComponent(id)}`,
+    shouldFavorite
+      ? { method: 'POST', body: JSON.stringify({ trail_id: id }) }
+      : { method: 'DELETE' },
+    true
+  );
+  return getFavoriteTrailIds();
+}
+
+export async function getTrailReviews(id: string): Promise<TrailReviewsResponse> {
+  const response = await request<{
+    reviews: { id: string; rating: number; comment: string; created_at: string; reviewer: string }[];
+    rating_average: number;
+    rating_count: number;
+  }>(`/api/trails/${encodeURIComponent(id)}/reviews`);
+  return {
+    reviews: response.reviews.map((review) => ({
+      id: review.id,
+      rating: review.rating,
+      comment: review.comment,
+      createdAt: review.created_at,
+      reviewer: review.reviewer,
+    })),
+    ratingAverage: response.rating_average,
+    ratingCount: response.rating_count,
+  };
+}
+
+export async function submitTrailReview(id: string, rating: number, comment: string) {
+  const response = await request<{
+    review: { id: string; rating: number; comment: string; created_at: string };
+    rating_average: number;
+    rating_count: number;
+  }>(`/api/trails/${encodeURIComponent(id)}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify({ rating, comment }),
+  }, true);
+  return response;
+}
+
+export async function getTrailStats(): Promise<TrailStats> {
+  if (await getToken()) {
+    const response = await request<{
+      year: number;
+      lifetime: { hikes: number; distance_km: number; moving_time_secs: number; calories_estimate: number };
+      monthly_distance: { month: number; distance_km: number }[];
+      personal_bests: {
+        longest_hike: { distance_km: number; trail_id: string; trail: string } | null;
+        most_climb: { estimated_gain_m: number; trail_id: string; trail: string } | null;
+        longest_time: { duration_secs: number; trail_id: string; trail: string } | null;
+        calories: { calories_estimate: number; trail_id: string; trail: string } | null;
+      };
+    }>('/api/stats', {}, true);
+    return {
+      year: response.year,
+      lifetime: {
+        hikes: response.lifetime.hikes,
+        distanceKm: response.lifetime.distance_km,
+        movingTimeSecs: response.lifetime.moving_time_secs,
+        caloriesEstimate: response.lifetime.calories_estimate,
+      },
+      monthlyDistance: response.monthly_distance.map((month) => ({
+        month: month.month,
+        distanceKm: month.distance_km,
+      })),
+      personalBests: {
+        longestHike: response.personal_bests.longest_hike
+          ? { distanceKm: response.personal_bests.longest_hike.distance_km, trailId: response.personal_bests.longest_hike.trail_id, trail: response.personal_bests.longest_hike.trail }
+          : null,
+        mostClimb: response.personal_bests.most_climb
+          ? { estimatedGainM: response.personal_bests.most_climb.estimated_gain_m, trailId: response.personal_bests.most_climb.trail_id, trail: response.personal_bests.most_climb.trail }
+          : null,
+        longestTime: response.personal_bests.longest_time
+          ? { durationSecs: response.personal_bests.longest_time.duration_secs, trailId: response.personal_bests.longest_time.trail_id, trail: response.personal_bests.longest_time.trail }
+          : null,
+        calories: response.personal_bests.calories
+          ? { caloriesEstimate: response.personal_bests.calories.calories_estimate, trailId: response.personal_bests.calories.trail_id, trail: response.personal_bests.calories.trail }
+          : null,
+      },
+    };
+  }
+
+  const hikes = await getGuestHikes();
+  let trails: Trail[];
+  try {
+    trails = await getTrails();
+  } catch {
+    trails = getOfflineTrails();
+  }
+  const year = new Date().getFullYear();
+  const monthlyDistance = Array.from({ length: 12 }, (_, index) => ({ month: index + 1, distanceKm: 0 }));
+  const durationOf = (hike: HikeHistoryItem) => hike.durationSecs ?? 0;
+  for (const hike of hikes) {
+    const date = hike.startedAt ? new Date(hike.startedAt) : new Date(hike.date);
+    if (date.getFullYear() === year) monthlyDistance[date.getMonth()].distanceKm += hike.km;
+  }
+  const longest = hikes.reduce<HikeHistoryItem | null>((best, hike) => !best || hike.km > best.km ? hike : best, null);
+  const longestTime = hikes.reduce<HikeHistoryItem | null>((best, hike) => !best || durationOf(hike) > durationOf(best) ? hike : best, null);
+  const climb = hikes.reduce<{ hike: HikeHistoryItem; gain: number } | null>((best, hike) => {
+    const trail = trails.find((item) => item.name === hike.trail);
+    const gain = trail ? Math.round(trail.gain * Math.min(hike.km / trail.km, 1)) : 0;
+    return gain > (best?.gain ?? 0) ? { hike, gain } : best;
+  }, null);
+  return {
+    year,
+    lifetime: {
+      hikes: hikes.length,
+      distanceKm: hikes.reduce((sum, hike) => sum + hike.km, 0),
+      movingTimeSecs: hikes.reduce((sum, hike) => sum + durationOf(hike), 0),
+      caloriesEstimate: Math.round(hikes.reduce((sum, hike) => sum + hike.km, 0) * 55),
+    },
+    monthlyDistance,
+    personalBests: {
+      longestHike: longest ? { distanceKm: longest.km, trailId: '', trail: longest.trail } : null,
+      mostClimb: climb ? { estimatedGainM: climb.gain, trailId: '', trail: climb.hike.trail } : null,
+      longestTime: longestTime ? { durationSecs: durationOf(longestTime), trailId: '', trail: longestTime.trail } : null,
+      calories: longest ? { caloriesEstimate: Math.round(longest.km * 55), trailId: '', trail: longest.trail } : null,
+    },
+  };
 }
 
 export async function saveHike(input: {
@@ -308,6 +508,8 @@ export async function getHikes(): Promise<HikeHistoryItem[]> {
       km: hike.distance_km,
       time: hours ? `${hours}h ${minutes}m` : `${minutes}m`,
       synced: Boolean(hike.synced_at),
+      startedAt: hike.started_at,
+      durationSecs: hike.duration_secs,
     };
   });
 }
