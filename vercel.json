@@ -1,8 +1,49 @@
 {
-  "rewrites": [
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm --prefix trailhead-api ci --omit=dev",
+  "builds": [
     {
-      "source": "/api/(.*)",
-      "destination": "/trailhead-api/api/$1"
+      "src": "trailhead-api/api/login.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "trailhead-api/api/register.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "trailhead-api/api/hikes/index.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "trailhead-api/api/trails/index.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "trailhead-api/api/trails/[id].ts",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "^/api/trails/?$",
+      "dest": "/trailhead-api/api/trails/index.ts"
+    },
+    {
+      "src": "^/api/trails/([^/]+)/?$",
+      "dest": "/trailhead-api/api/trails/[id].ts?id=$1"
+    },
+    {
+      "src": "^/api/login/?$",
+      "dest": "/trailhead-api/api/login.ts"
+    },
+    {
+      "src": "^/api/register/?$",
+      "dest": "/trailhead-api/api/register.ts"
+    },
+    {
+      "src": "^/api/hikes/?$",
+      "dest": "/trailhead-api/api/hikes/index.ts"
     }
   ]
 }
