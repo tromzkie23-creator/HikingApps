@@ -130,7 +130,7 @@ async function request<T>(
   } catch {
     if (response.status === 404 || response.headers.get('content-type')?.includes('text/html')) {
       throw new ApiError(
-        `The API returned a web page instead of Trailhead data (HTTP ${response.status}). In Vercel, set this project's Root Directory to trailhead-api and redeploy.`,
+        `The API returned a web page instead of JSON (HTTP ${response.status}). Check that EXPO_PUBLIC_API_BASE_URL points to the deployed Trailhead API and that its routes are deployed.`,
         response.status
       );
     }
