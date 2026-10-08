@@ -16,16 +16,59 @@ Vercel serverless API backed by Turso/libSQL. The repository-root Vercel project
 | POST | `/api/hikes` | Bearer JWT | Save a completed hike |
 | GET | `/api/hikes` | Bearer JWT | Current user's hike history |
 
+`DELETE /api/hikes` accepts `{ "hike_id": "<id>" }` and removes only a hike owned by the authenticated user.
+
 ## Apply schema changes to an existing Turso database
 
-From the repository root, first confirm that the Turso CLI is connected to the existing database, then apply the idempotent schema:
+From the repository root, back up the existing database, confirm the Turso CLI is connected to it, then apply the schema and Philippines seed:
 
 ```powershell
 turso db show hikingdatabase
 Get-Content .\trailhead-api\schema.sql -Raw | turso db shell hikingdatabase
 ```
 
-The schema uses `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, and `INSERT OR IGNORE`; rerunning it adds the favorites and reviews tables without dropping tables, deleting rows, or duplicating the sample trail data. It does not require changing any Vercel environment variables.
+The schema uses `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, and `INSERT OR IGNORE`. It replaces the three legacy sample trails with nine Philippine trail entries. A legacy trail is retained only if an existing hike log references it, so hike history is not deleted; unreferenced legacy trails (and their dependent waypoints, reviews, and server-side favorites) are removed. The nine new trail IDs are stable, so rerunning the schema does not duplicate them. This does not require changing any Vercel environment variables.
+
+### Enable named free hikes on an existing database
+
+Before deploying the free-hike API, migrate an existing `hike_logs` table. This preserves hike rows, allows a nullable `trail_id`, and adds a hike name and waypoint JSON. Back up first. This migration assumes the previous `path_json` column has already been added; if not, add that column first using the migration instructions from the earlier release.
+
+Run this SQL once in the Turso shell:
+
+```sql
+PRAGMA foreign_keys = OFF;
+BEGIN IMMEDIATE;
+
+CREATE TABLE hike_logs_new (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  trail_id TEXT REFERENCES trails(id) ON DELETE SET NULL,
+  name TEXT NOT NULL DEFAULT '',
+  distance_km REAL NOT NULL CHECK (distance_km > 0),
+  duration_secs INTEGER NOT NULL CHECK (duration_secs >= 0),
+  path_json TEXT CHECK (path_json IS NULL OR json_valid(path_json)),
+  waypoints_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(waypoints_json)),
+  started_at TEXT NOT NULL,
+  synced_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+INSERT INTO hike_logs_new
+  (id, user_id, trail_id, name, distance_km, duration_secs, path_json, waypoints_json, started_at, synced_at)
+SELECT h.id, h.user_id, h.trail_id, COALESCE(t.name, ''), h.distance_km, h.duration_secs,
+       h.path_json, '[]', h.started_at, h.synced_at
+FROM hike_logs h
+LEFT JOIN trails t ON t.id = h.trail_id;
+
+DROP TABLE hike_logs;
+ALTER TABLE hike_logs_new RENAME TO hike_logs;
+CREATE INDEX idx_hike_logs_user_started ON hike_logs(user_id, started_at DESC);
+
+COMMIT;
+PRAGMA foreign_keys = ON;
+PRAGMA foreign_key_check;
+```
+
+New databases get these fields and nullable trail references from `schema.sql`. Unsynced hikes remain on-device and retry when History loads while signed in.
 
 ## Create and seed Turso
 
@@ -39,7 +82,7 @@ The schema uses `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, and 
    turso db shell trailhead < schema.sql
    ```
 
-   In PowerShell, use `Get-Content .\schema.sql -Raw | turso db shell trailhead`, or open `turso db shell trailhead` and paste the contents of `schema.sql`. The script creates the schema and inserts the three current sample trails and their waypoints. It is safe to run more than once.
+   In PowerShell, use `Get-Content .\schema.sql -Raw | turso db shell trailhead`, or open `turso db shell trailhead` and paste the contents of `schema.sql`. The script creates the schema and inserts nine optional Philippine trail entries and their waypoints. It is safe to run more than once.
 
 ## Run the API locally
 
@@ -62,7 +105,8 @@ Set each prompted value. `JWT_SECRET` must be a random secret at least 32 charac
 2. Add `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `JWT_SECRET` under **Project Settings → Environment Variables** for Preview and Production. `JWT_SECRET` must be a random secret at least 32 characters long. Never put backend secrets in the Expo app or commit them.
 3. Redeploy the project. Vercel installs the backend's production dependencies from `trailhead-api/package-lock.json`.
 4. In the Expo project root, set `EXPO_PUBLIC_API_BASE_URL` to the deployed origin, for example `https://trailhead-api-your-team.vercel.app` (no trailing slash), and restart Expo. This URL is public; never place the Turso token or JWT signing secret in the Expo app.
-5. Verify `https://<deployment>/api/trails` returns JSON with a `trails` array. A POST to `/api/login` with an empty JSON body should return a JSON validation error, not an HTML page.
+5. To enable optional worldwide foot-hiking routes, set `EXPO_PUBLIC_OPENROUTESERVICE_API_KEY` in the Expo environment and restart Expo. GPS tracking and place search work without this key.
+6. Verify `https://<deployment>/api/trails` returns JSON with a `trails` array. A POST to `/api/login` with an empty JSON body should return a JSON validation error, not an HTML page.
 
 ## App packages
 
@@ -70,9 +114,10 @@ From the Expo project root:
 
 ```sh
 npx expo install expo-secure-store
+npx expo install @react-native-async-storage/async-storage
 ```
 
-The app uses the built-in `fetch`; no separate HTTP client is required. If the dependency is already installed, no install is needed.
+Favorites are stored locally with AsyncStorage; credentials continue to use SecureStore. The app uses the built-in `fetch`; no separate HTTP client is required. If a dependency is already installed, no install is needed.
 
 ## Security notes
 

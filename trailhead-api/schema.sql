@@ -33,9 +33,12 @@ CREATE TABLE IF NOT EXISTS waypoints (
 CREATE TABLE IF NOT EXISTS hike_logs (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  trail_id TEXT NOT NULL REFERENCES trails(id),
+  trail_id TEXT REFERENCES trails(id) ON DELETE SET NULL,
+  name TEXT NOT NULL DEFAULT '',
   distance_km REAL NOT NULL CHECK (distance_km > 0),
   duration_secs INTEGER NOT NULL CHECK (duration_secs >= 0),
+  path_json TEXT CHECK (path_json IS NULL OR json_valid(path_json)),
+  waypoints_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(waypoints_json)),
   started_at TEXT NOT NULL,
   synced_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -66,37 +69,105 @@ CREATE INDEX IF NOT EXISTS idx_favorites_user
 CREATE INDEX IF NOT EXISTS idx_reviews_trail_created
   ON reviews(trail_id, created_at DESC);
 
+DELETE FROM trails
+WHERE id IN ('1', '2', '3')
+  AND NOT EXISTS (
+    SELECT 1 FROM hike_logs WHERE hike_logs.trail_id = trails.id
+  );
+
+-- Route distances, elevation gains, and trail/waypoint coordinates are approximate.
 INSERT OR IGNORE INTO trails
   (id, name, area, km, gain, level, description, path_json, elevation_json)
 VALUES
   (
-    '1', 'Osmeña Peak', 'Dalaguete, Cebu', 3.2, 420, 'Easy',
-    'Short climb to the highest point in Cebu with sweeping ridge views.',
-    '[{"latitude":9.8212,"longitude":123.4264},{"latitude":9.8235,"longitude":123.4278},{"latitude":9.8257,"longitude":123.4285},{"latitude":9.8274,"longitude":123.4298},{"latitude":9.8292,"longitude":123.4311}]',
-    '[20,35,50,60,75,90,100,95]'
+    'ph-mt-pulag', 'Mt. Pulag (Ambangeg Trail)', 'Kabayan, Benguet Province, Luzon, Philippines', 8, 850, 'Moderate',
+    'A high-altitude grassland climb to Luzon''s highest summit. Route distance, elevation gain, and waypoint coordinates are approximate; register and check current park, weather, and permit requirements.',
+    '[{"latitude":16.589,"longitude":120.9},{"latitude":16.576,"longitude":120.904},{"latitude":16.5635,"longitude":120.901},{"latitude":16.5535,"longitude":120.898}]',
+    '[0,300,620,850]'
   ),
   (
-    '2', 'Tabunan Forest Trail', 'Cebu City', 7.5, 780, 'Moderate',
-    'Forest loop with river crossings and a rest camp midway.',
-    '[{"latitude":10.3951,"longitude":123.7538},{"latitude":10.3962,"longitude":123.7552},{"latitude":10.3971,"longitude":123.7567},{"latitude":10.3982,"longitude":123.7576},{"latitude":10.3995,"longitude":123.7562}]',
-    '[30,45,40,65,80,70,90,60]'
+    'ph-mt-batulao', 'Mt. Batulao', 'Nasugbu, Batangas Province, Luzon, Philippines', 8, 600, 'Moderate',
+    'A rolling grassland ridge hike with open views of the Batangas countryside. Route distance, elevation gain, and waypoint coordinates are approximate; check land access, registration, and weather before hiking.',
+    '[{"latitude":14.095,"longitude":120.779},{"latitude":14.091,"longitude":120.78},{"latitude":14.088,"longitude":120.776},{"latitude":14.093,"longitude":120.774}]',
+    '[0,180,420,600]'
   ),
   (
-    '3', 'Casino Peak Ridge', 'Badian, Cebu', 11.8, 1240, 'Hard',
-    'Long exposed ridge walk. Start early and carry extra water.',
-    '[{"latitude":9.8178,"longitude":123.4148},{"latitude":9.8195,"longitude":123.4162},{"latitude":9.8212,"longitude":123.4179},{"latitude":9.8228,"longitude":123.4193},{"latitude":9.8245,"longitude":123.4211}]',
-    '[25,55,85,70,100,95,110,100]'
+    'ph-pico-de-loro', 'Mt. Pico de Loro', 'Maragondon, Cavite Province, Luzon, Philippines', 7.5, 650, 'Hard',
+    'A forested ascent in the Mounts Palay-Palay-Mataas-na-Gulod Protected Landscape, ending at the distinctive summit. Route distance, elevation gain, and waypoint coordinates are approximate; follow current protected-area rules.',
+    '[{"latitude":14.2025,"longitude":120.6345},{"latitude":14.204,"longitude":120.637},{"latitude":14.206,"longitude":120.639},{"latitude":14.206,"longitude":120.64}]',
+    '[0,180,430,650]'
+  ),
+  (
+    'ph-mt-ulap', 'Mt. Ulap Eco-Trail', 'Itogon, Benguet Province, Luzon, Philippines', 8, 650, 'Moderate',
+    'A scenic Cordillera ridge walk passing grassland viewpoints and pine-covered slopes. Route distance, elevation gain, and waypoint coordinates are approximate; use the local registration and guide system.',
+    '[{"latitude":16.348,"longitude":120.592},{"latitude":16.342,"longitude":120.59},{"latitude":16.338,"longitude":120.586},{"latitude":16.332,"longitude":120.582}]',
+    '[0,220,450,650]'
+  ),
+  (
+    'ph-osmena-peak', 'Osmeña Peak', 'Dalaguete, Cebu Province, Visayas, Philippines', 3.2, 420, 'Easy',
+    'A short climb to Cebu''s highest peak, known for its jagged green hills and sea views. Route distance, elevation gain, and waypoint coordinates are approximate; confirm local access and weather.',
+    '[{"latitude":9.8212,"longitude":123.4264},{"latitude":9.8241,"longitude":123.4281},{"latitude":9.8274,"longitude":123.4298},{"latitude":9.8292,"longitude":123.4311}]',
+    '[0,120,280,420]'
+  ),
+  (
+    'ph-kawasan-canyon', 'Kawasan Falls Canyon Trail', 'Badian, Cebu Province, Visayas, Philippines', 5, 300, 'Hard',
+    'A river-and-waterfall canyoning route near Kawasan Falls, not a self-guided hike. Route distance, elevation gain, and waypoint coordinates are approximate; go only with an accredited guide and required safety gear and permits.',
+    '[{"latitude":9.8063,"longitude":123.378},{"latitude":9.804,"longitude":123.377},{"latitude":9.801,"longitude":123.375},{"latitude":9.798,"longitude":123.374}]',
+    '[0,100,220,300]'
+  ),
+  (
+    'ph-mt-manunggal', 'Mt. Manunggal', 'Balamban, Cebu Province, Visayas, Philippines', 7, 650, 'Moderate',
+    'A forested upland hike to a Cebu mountain campsite and historic memorial area. Route distance, elevation gain, and waypoint coordinates are approximate; check local access and conditions.',
+    '[{"latitude":10.4735,"longitude":123.716},{"latitude":10.477,"longitude":123.717},{"latitude":10.48,"longitude":123.717},{"latitude":10.483,"longitude":123.718}]',
+    '[0,180,430,650]'
+  ),
+  (
+    'ph-mt-apo', 'Mt. Apo', 'Davao del Sur / Cotabato Provinces, Mindanao, Philippines', 22, 2100, 'Hard',
+    'A demanding multi-day ascent of the Philippines'' highest mountain through forest and volcanic terrain. Route distance, elevation gain, and waypoint coordinates are approximate; use an authorized route and secure current permits and a local guide.',
+    '[{"latitude":6.987,"longitude":125.271},{"latitude":6.992,"longitude":125.275},{"latitude":6.996,"longitude":125.279},{"latitude":7.001,"longitude":125.282}]',
+    '[0,650,1400,2100]'
+  ),
+  (
+    'ph-mt-hamiguitan', 'Mt. Hamiguitan', 'San Isidro, Davao Oriental Province, Mindanao, Philippines', 13, 1100, 'Hard',
+    'A steep climb through the mountain sanctuary''s distinctive mossy and pygmy forest. Route distance, elevation gain, and waypoint coordinates are approximate; hike only on an authorized route with sanctuary permits and local guidance.',
+    '[{"latitude":6.724,"longitude":126.17},{"latitude":6.729,"longitude":126.175},{"latitude":6.733,"longitude":126.181},{"latitude":6.737,"longitude":126.186}]',
+    '[0,350,760,1100]'
   );
 
 INSERT OR IGNORE INTO waypoints (id, trail_id, name, type, km, lat, lng) VALUES
-  ('1-start', '1', 'Trailhead', 'Start', 0, 9.8212, 123.4264),
-  ('1-water', '1', 'Water station', 'Water', 1.1, 9.8241, 123.4281),
-  ('1-summit', '1', 'Summit view', 'Scenic', 3.2, 9.8292, 123.4311),
-  ('2-start', '2', 'Trailhead', 'Start', 0, 10.3951, 123.7538),
-  ('2-water', '2', 'River crossing', 'Water', 2.4, 10.3971, 123.7567),
-  ('2-camp', '2', 'Camp site', 'Camp', 4.8, 10.3995, 123.7562),
-  ('2-lookout', '2', 'Lookout', 'Scenic', 6.9, 10.3982, 123.7576),
-  ('3-start', '3', 'Trailhead', 'Start', 0, 9.8178, 123.4148),
-  ('3-camp', '3', 'Rest hut', 'Camp', 3.5, 9.8212, 123.4179),
-  ('3-viewpoint', '3', 'Ridge viewpoint', 'Scenic', 8.2, 9.8228, 123.4193),
-  ('3-summit', '3', 'Summit', 'Scenic', 11.8, 9.8245, 123.4211);
+  ('ph-mt-pulag-start', 'ph-mt-pulag', 'Ambangeg trailhead', 'Start', 0, 16.589, 120.9),
+  ('ph-mt-pulag-camp', 'ph-mt-pulag', 'Camp 1', 'Camp', 2.5, 16.576, 120.904),
+  ('ph-mt-pulag-forest', 'ph-mt-pulag', 'Mossy forest edge', 'Scenic', 5, 16.5635, 120.901),
+  ('ph-mt-pulag-summit', 'ph-mt-pulag', 'Pulag summit', 'Scenic', 8, 16.5535, 120.898),
+  ('ph-mt-batulao-start', 'ph-mt-batulao', 'Trailhead', 'Start', 0, 14.095, 120.779),
+  ('ph-mt-batulao-ridge', 'ph-mt-batulao', 'First ridge', 'Scenic', 2, 14.091, 120.78),
+  ('ph-mt-batulao-rest', 'ph-mt-batulao', 'Rest area', 'Water', 4.5, 14.088, 120.776),
+  ('ph-mt-batulao-summit', 'ph-mt-batulao', 'Batulao summit', 'Scenic', 8, 14.093, 120.774),
+  ('ph-pico-de-loro-start', 'ph-pico-de-loro', 'DENR trailhead', 'Start', 0, 14.2025, 120.6345),
+  ('ph-pico-de-loro-rest', 'ph-pico-de-loro', 'Forest rest stop', 'Camp', 2.2, 14.204, 120.637),
+  ('ph-pico-de-loro-junction', 'ph-pico-de-loro', 'Summit junction', 'Scenic', 5.5, 14.206, 120.639),
+  ('ph-pico-de-loro-summit', 'ph-pico-de-loro', 'Pico de Loro summit', 'Scenic', 7.5, 14.206, 120.64),
+  ('ph-mt-ulap-start', 'ph-mt-ulap', 'Ampucao trailhead', 'Start', 0, 16.348, 120.592),
+  ('ph-mt-ulap-viewpoint', 'ph-mt-ulap', 'Gungal Rock viewpoint', 'Scenic', 2.4, 16.342, 120.59),
+  ('ph-mt-ulap-camp', 'ph-mt-ulap', 'Camp site', 'Camp', 5, 16.338, 120.586),
+  ('ph-mt-ulap-summit', 'ph-mt-ulap', 'Mt. Ulap summit', 'Scenic', 8, 16.332, 120.582),
+  ('ph-osmena-peak-start', 'ph-osmena-peak', 'Mantalungon trailhead', 'Start', 0, 9.8212, 123.4264),
+  ('ph-osmena-peak-rest', 'ph-osmena-peak', 'Rest stop', 'Water', 1.1, 9.8241, 123.4281),
+  ('ph-osmena-peak-ridge', 'ph-osmena-peak', 'Ridge viewpoint', 'Scenic', 2.2, 9.8274, 123.4298),
+  ('ph-osmena-peak-summit', 'ph-osmena-peak', 'Osmeña Peak', 'Scenic', 3.2, 9.8292, 123.4311),
+  ('ph-kawasan-canyon-start', 'ph-kawasan-canyon', 'Canyoning check-in', 'Start', 0, 9.8063, 123.378),
+  ('ph-kawasan-canyon-river', 'ph-kawasan-canyon', 'First river section', 'Water', 1.3, 9.804, 123.377),
+  ('ph-kawasan-canyon-falls', 'ph-kawasan-canyon', 'Waterfall rest area', 'Scenic', 3.2, 9.801, 123.375),
+  ('ph-kawasan-canyon-exit', 'ph-kawasan-canyon', 'Kawasan Falls exit', 'Scenic', 5, 9.798, 123.374),
+  ('ph-mt-manunggal-start', 'ph-mt-manunggal', 'Trailhead', 'Start', 0, 10.4735, 123.716),
+  ('ph-mt-manunggal-rest', 'ph-mt-manunggal', 'Forest rest stop', 'Camp', 2, 10.477, 123.717),
+  ('ph-mt-manunggal-memorial', 'ph-mt-manunggal', 'Memorial area', 'Scenic', 4.5, 10.48, 123.717),
+  ('ph-mt-manunggal-camp', 'ph-mt-manunggal', 'Manunggal campsite', 'Camp', 7, 10.483, 123.718),
+  ('ph-mt-apo-start', 'ph-mt-apo', 'Main trailhead', 'Start', 0, 6.987, 125.271),
+  ('ph-mt-apo-camp', 'ph-mt-apo', 'Forest camp', 'Camp', 6, 6.992, 125.275),
+  ('ph-mt-apo-boulder', 'ph-mt-apo', 'Boulder section', 'Scenic', 14, 6.996, 125.279),
+  ('ph-mt-apo-summit', 'ph-mt-apo', 'Apo summit area', 'Scenic', 22, 7.001, 125.282),
+  ('ph-mt-hamiguitan-start', 'ph-mt-hamiguitan', 'Authorized trailhead', 'Start', 0, 6.724, 126.17),
+  ('ph-mt-hamiguitan-rest', 'ph-mt-hamiguitan', 'Forest rest stop', 'Camp', 3.5, 6.729, 126.175),
+  ('ph-mt-hamiguitan-forest', 'ph-mt-hamiguitan', 'Mossy forest', 'Scenic', 8, 6.733, 126.181),
+  ('ph-mt-hamiguitan-summit', 'ph-mt-hamiguitan', 'Summit zone', 'Scenic', 13, 6.737, 126.186);

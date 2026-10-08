@@ -12,6 +12,7 @@ export const C = {
 export type Coordinate = {
   latitude: number;
   longitude: number;
+  altitude?: number | null;
 };
 
 export type TrailWaypoint = {

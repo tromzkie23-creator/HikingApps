@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
@@ -9,15 +9,18 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import MapView, { Marker, Polyline, UrlTile, type MapType } from 'react-native-maps';
+import MapView, { Marker, Polyline, UrlTile } from 'react-native-maps';
 import * as Location from 'expo-location';
 
 import { C, type Coordinate, type Trail } from './theme';
 
-const OPENROUTESERVICE_API_KEY = 'YOUR_OPENROUTESERVICE_API_KEY';
+const OPENROUTESERVICE_API_KEY = process.env.EXPO_PUBLIC_OPENROUTESERVICE_API_KEY?.trim() ?? '';
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const OPENROUTESERVICE_URL = 'https://api.openrouteservice.org/v2/directions/foot-hiking/geojson';
+const OPENSTREETMAP_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const OPENTOPOMAP_TILE_URL = 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png';
+const ESRI_SATELLITE_TILE_URL =
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 
 type Layer = 'Standard' | 'Terrain' | 'Satellite';
 
@@ -44,9 +47,43 @@ type TrailMapProps = {
   showGuide?: boolean;
   onLocation?: (coordinate: Coordinate) => void;
   fullScreen?: boolean;
+  disableLocationTracking?: boolean;
+  recordedPath?: Coordinate[];
+  recordedLocation?: Coordinate | null;
+  followUser?: boolean;
+  mapRetryKey?: number;
+  centerButtonTop?: boolean;
+  onMapReady?: () => void;
+  onMapError?: (error: Error) => void;
 };
 
 const layers: Layer[] = ['Standard', 'Terrain', 'Satellite'];
+
+class MapErrorBoundary extends Component<
+  { children: ReactNode; onError?: (error: Error) => void },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, _info: ErrorInfo) {
+    this.props.onError?.(error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={styles.mapFailure}>
+          <Text style={styles.errorMessage}>The map could not be displayed. Check your connection and try again.</Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function distanceInMeters(first: Coordinate, second: Coordinate) {
   const radians = (degrees: number) => (degrees * Math.PI) / 180;
@@ -72,7 +109,20 @@ function formatDuration(seconds: number) {
   return hours ? `${hours} hr ${remainingMinutes} min` : `${minutes} min`;
 }
 
-export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = false }: TrailMapProps) {
+export function TrailMap({
+  trail,
+  showGuide = false,
+  onLocation,
+  fullScreen = false,
+  disableLocationTracking = false,
+  recordedPath,
+  recordedLocation,
+  followUser = false,
+  mapRetryKey = 0,
+  centerButtonTop = false,
+  onMapReady,
+  onMapError,
+}: TrailMapProps) {
   const mapRef = useRef<MapView>(null);
   const locationRef = useRef<Coordinate | null>(null);
   const routeRef = useRef<HikingRoute | null>(null);
@@ -93,6 +143,15 @@ export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = fa
   const [nextStep, setNextStep] = useState(0);
 
   useEffect(() => {
+    if (!followUser || !recordedLocation) return;
+    mapRef.current?.animateToRegion(
+      { ...recordedLocation, latitudeDelta: 0.012, longitudeDelta: 0.012 },
+      350
+    );
+  }, [followUser, recordedLocation]);
+
+  useEffect(() => {
+    if (disableLocationTracking) return;
     let active = true;
     let subscription: Location.LocationSubscription | undefined;
 
@@ -150,7 +209,7 @@ export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = fa
       active = false;
       subscription?.remove();
     };
-  }, [onLocation]);
+  }, [disableLocationTracking, onLocation]);
 
   useEffect(() => {
     const destinationPoint = destination;
@@ -261,14 +320,18 @@ export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = fa
     }
 
     setIsSearching(true);
-    setSearchMessage('Searching the world…');
+    setSearchMessage('Searching places worldwide…');
     setRouteMessage('');
     try {
       const waitMs = Math.max(0, 1000 - (Date.now() - lastNominatimRequestAt.current));
       if (waitMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
       lastNominatimRequestAt.current = Date.now();
       const response = await fetch(
-        `${NOMINATIM_URL}?${new URLSearchParams({ format: 'jsonv2', q: search, limit: '1' }).toString()}`,
+        `${NOMINATIM_URL}?${new URLSearchParams({
+          format: 'jsonv2',
+          q: search,
+          limit: '1',
+        }).toString()}`,
         {
           headers: {
             Accept: 'application/json',
@@ -295,7 +358,6 @@ export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = fa
         setSearchMessage('The search service returned an invalid location. Try another search.');
         return;
       }
-
       const place: Destination = {
         latitude,
         longitude,
@@ -323,6 +385,13 @@ export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = fa
   }
 
   function centerOnMe() {
+    if (recordedLocation) {
+      mapRef.current?.animateToRegion(
+        { ...recordedLocation, latitudeDelta: 0.012, longitudeDelta: 0.012 },
+        450
+      );
+      return;
+    }
     if (!hasLocationPermission) {
       setLocationMessage('Location permission denied. Allow location access in your phone settings.');
       return;
@@ -338,29 +407,35 @@ export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = fa
   }
 
   const initialRegion = {
-    latitude: trail.latitude,
-    longitude: trail.longitude,
-    latitudeDelta: 0.025,
-    longitudeDelta: 0.025,
+    latitude: Number.isFinite(trail.latitude) ? trail.latitude : 0,
+    longitude: Number.isFinite(trail.longitude) ? trail.longitude : 0,
+    latitudeDelta: 0.01,
+    longitudeDelta: 0.01,
   };
+  const tileUrl =
+    layer === 'Terrain'
+      ? OPENTOPOMAP_TILE_URL
+      : layer === 'Satellite'
+        ? ESRI_SATELLITE_TILE_URL
+        : OPENSTREETMAP_TILE_URL;
   const missingRouteKey =
     !!destination &&
     hasLocation &&
     !route &&
     (!OPENROUTESERVICE_API_KEY || OPENROUTESERVICE_API_KEY === 'YOUR_OPENROUTESERVICE_API_KEY');
   const routeStatusMessage = missingRouteKey
-    ? 'Add an OpenRouteService API key in trail-map.tsx to get walking directions.'
+    ? 'Set EXPO_PUBLIC_OPENROUTESERVICE_API_KEY to enable walking directions.'
     : routeMessage;
 
   return (
     <View style={fullScreen ? styles.fullMapRoot : undefined}>
       <View style={[styles.searchRow, fullScreen && styles.fullSearchRow]}>
         <TextInput
-          accessibilityLabel="Search any destination in the world"
+          accessibilityLabel="Search for a place anywhere"
           value={query}
           onChangeText={setQuery}
           onSubmitEditing={() => void searchDestination()}
-          placeholder="Search any place in the world"
+          placeholder="Search any place"
           placeholderTextColor={C.mute}
           returnKeyType="search"
           style={styles.searchInput}
@@ -396,24 +471,27 @@ export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = fa
       </View>
 
       <View style={[styles.mapFrame, fullScreen && styles.fullMapFrame]}>
-        <MapView
-          ref={mapRef}
-          style={StyleSheet.absoluteFill}
-          initialRegion={initialRegion}
-          mapType={(layer === 'Satellite' ? 'satellite' : 'standard') as MapType}
-          showsUserLocation={hasLocationPermission}
-          showsMyLocationButton={false}
-          toolbarEnabled={false}
-          loadingEnabled
-          accessibilityLabel={`${trail.name} hiking map`}>
-          {layer === 'Terrain' && (
-            <UrlTile
-              urlTemplate={OPENTOPOMAP_TILE_URL}
-              maximumZ={17}
-              tileSize={256}
-              zIndex={1}
-            />
-          )}
+        <MapErrorBoundary key={mapRetryKey} onError={onMapError}>
+          <MapView
+            ref={mapRef}
+            style={StyleSheet.absoluteFill}
+            initialRegion={initialRegion}
+            mapType="none"
+            showsUserLocation={disableLocationTracking ? false : hasLocationPermission}
+            showsMyLocationButton={false}
+            toolbarEnabled={false}
+            loadingEnabled
+            onMapReady={onMapReady}
+            onMapLoaded={onMapReady}
+            accessibilityLabel={`${trail.name} hiking map`}>
+          <UrlTile
+            key={layer}
+            urlTemplate={tileUrl}
+            maximumZ={19}
+            flipY={false}
+            tileSize={256}
+            zIndex={1}
+          />
           <Polyline
             coordinates={trail.path}
             strokeColor={C.moss}
@@ -428,6 +506,24 @@ export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = fa
               strokeWidth={5}
               lineCap="round"
               lineJoin="round"
+            />
+          )}
+          {!!recordedPath?.length && (
+            <Polyline
+              coordinates={recordedPath}
+              strokeColor="#2478E5"
+              strokeWidth={6}
+              lineCap="round"
+              lineJoin="round"
+              zIndex={3}
+            />
+          )}
+          {recordedLocation && (
+            <Marker
+              coordinate={recordedLocation}
+              title="Your location"
+              pinColor="#2478E5"
+              zIndex={4}
             />
           )}
           {trail.wps.map((waypoint, index) => (
@@ -455,12 +551,13 @@ export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = fa
               pinColor={C.ember}
             />
           )}
-        </MapView>
+          </MapView>
+        </MapErrorBoundary>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Center map on my location"
           onPress={centerOnMe}
-          style={styles.centerButton}>
+          style={[styles.centerButton, centerButtonTop && styles.centerButtonTop]}>
           <Text style={styles.centerButtonText}>◎</Text>
         </Pressable>
         {fullScreen && (
@@ -477,7 +574,7 @@ export function TrailMap({ trail, showGuide = false, onLocation, fullScreen = fa
       <Text style={[styles.attribution, fullScreen && styles.fullAttribution]}>
         © OpenStreetMap contributors · Terrain © OpenTopoMap · Directions © openrouteservice.org
       </Text>
-      {!!locationMessage && <Text style={styles.errorMessage}>{locationMessage}</Text>}
+      {!disableLocationTracking && !!locationMessage && <Text style={styles.errorMessage}>{locationMessage}</Text>}
       {!!routeStatusMessage && <Text style={styles.errorMessage}>{routeStatusMessage}</Text>}
 
       {showGuide && (
@@ -630,8 +727,16 @@ const styles = StyleSheet.create({
   fullMapFrame: {
     flex: 1,
     minHeight: 400,
+    width: '100%',
     height: undefined,
     borderRadius: 0,
+  },
+  mapFailure: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E6ECE1',
+    padding: 24,
   },
   centerButton: {
     position: 'absolute',
@@ -648,6 +753,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.16,
     shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
+  },
+  centerButtonTop: {
+    top: 166,
+    bottom: undefined,
   },
   centerButtonText: {
     color: C.spruce,

@@ -29,10 +29,12 @@ export default function TabLayout() {
           backgroundColor: C.white,
           borderTopColor: C.line,
         },
+        tabBarItemStyle: { paddingHorizontal: 1 },
       }}>
       <Tabs.Screen name="index" options={{ title: 'Explore', tabBarIcon: tabIcon('compass-outline') }} />
       <Tabs.Screen name="plans" options={{ title: 'Plans', tabBarIcon: tabIcon('bookmark-outline') }} />
       <Tabs.Screen name="record" options={{ title: 'Record', tabBarIcon: tabIcon('radio-button-on-outline') }} />
+      <Tabs.Screen name="history" options={{ title: 'History', tabBarIcon: tabIcon('time-outline') }} />
       <Tabs.Screen name="friends" options={{ title: 'Friends', tabBarIcon: tabIcon('people-outline') }} />
       <Tabs.Screen name="profile" options={{ title: 'Profile', tabBarIcon: tabIcon('person-outline') }} />
     </Tabs>

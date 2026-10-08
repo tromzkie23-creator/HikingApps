@@ -37,21 +37,23 @@ export default async function stats(request: ApiRequest, response: ApiResponse) 
         args: [userId, String(year)],
       }),
       db.execute({
-        sql: `SELECT h.distance_km, h.trail_id, t.name AS trail
-              FROM hike_logs h JOIN trails t ON t.id = h.trail_id
+        sql: `SELECT h.distance_km, h.trail_id,
+                     COALESCE(NULLIF(h.name, ''), t.name, 'Free hike') AS trail
+              FROM hike_logs h LEFT JOIN trails t ON t.id = h.trail_id
               WHERE h.user_id = ? ORDER BY h.distance_km DESC, h.started_at DESC LIMIT 1`,
         args: [userId],
       }),
       db.execute({
-        sql: `SELECT h.duration_secs, h.trail_id, t.name AS trail
-              FROM hike_logs h JOIN trails t ON t.id = h.trail_id
+        sql: `SELECT h.duration_secs, h.trail_id,
+                     COALESCE(NULLIF(h.name, ''), t.name, 'Free hike') AS trail
+              FROM hike_logs h LEFT JOIN trails t ON t.id = h.trail_id
               WHERE h.user_id = ? ORDER BY h.duration_secs DESC, h.started_at DESC LIMIT 1`,
         args: [userId],
       }),
       db.execute({
-        sql: `SELECT ROUND(t.gain * MIN(h.distance_km / t.km, 1)) AS estimated_gain_m,
-                     h.trail_id, t.name AS trail
-              FROM hike_logs h JOIN trails t ON t.id = h.trail_id
+        sql: `SELECT COALESCE(ROUND(t.gain * MIN(h.distance_km / t.km, 1)), 0) AS estimated_gain_m,
+                     h.trail_id, COALESCE(NULLIF(h.name, ''), t.name, 'Free hike') AS trail
+              FROM hike_logs h LEFT JOIN trails t ON t.id = h.trail_id
               WHERE h.user_id = ?
               ORDER BY estimated_gain_m DESC, h.started_at DESC LIMIT 1`,
         args: [userId],
@@ -83,16 +85,16 @@ export default async function stats(request: ApiRequest, response: ApiResponse) 
       monthly_distance: monthlyDistance,
       personal_bests: {
         longest_hike: longestHike
-          ? { distance_km: Number(longestHike.distance_km), trail_id: String(longestHike.trail_id), trail: String(longestHike.trail) }
+          ? { distance_km: Number(longestHike.distance_km), trail_id: longestHike.trail_id === null ? '' : String(longestHike.trail_id), trail: String(longestHike.trail) }
           : null,
         most_climb: mostClimb
-          ? { estimated_gain_m: Number(mostClimb.estimated_gain_m), trail_id: String(mostClimb.trail_id), trail: String(mostClimb.trail) }
+          ? { estimated_gain_m: Number(mostClimb.estimated_gain_m), trail_id: mostClimb.trail_id === null ? '' : String(mostClimb.trail_id), trail: String(mostClimb.trail) }
           : null,
         longest_time: longestTime
-          ? { duration_secs: Number(longestTime.duration_secs), trail_id: String(longestTime.trail_id), trail: String(longestTime.trail) }
+          ? { duration_secs: Number(longestTime.duration_secs), trail_id: longestTime.trail_id === null ? '' : String(longestTime.trail_id), trail: String(longestTime.trail) }
           : null,
         calories: longestHike
-          ? { calories_estimate: Math.round(Number(longestHike.distance_km) * 55), trail_id: String(longestHike.trail_id), trail: String(longestHike.trail) }
+          ? { calories_estimate: Math.round(Number(longestHike.distance_km) * 55), trail_id: longestHike.trail_id === null ? '' : String(longestHike.trail_id), trail: String(longestHike.trail) }
           : null,
       },
     });

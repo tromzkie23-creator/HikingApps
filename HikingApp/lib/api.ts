@@ -1,14 +1,16 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
 import { getOfflineTrails } from './offline-trails';
 import type { Coordinate, Trail, TrailWaypoint } from './theme';
 
-export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL ?? 'https://your-trailhead-api.vercel.app';
+const configuredApiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+export const API_BASE_URL = configuredApiBaseUrl || 'https://your-trailhead-api.vercel.app';
 
 const TOKEN_KEY = 'trailhead.jwt';
 const USER_KEY = 'trailhead.user';
 const GUEST_HIKES_KEY = 'trailhead.guest-hikes';
+const LOCAL_HIKES_KEY = 'trailhead.local-hikes';
 const FAVORITES_KEY = 'trailhead.favorite-trails';
 
 export type SessionUser = {
@@ -50,14 +52,63 @@ export type TrailStats = {
 
 export type HikeHistoryItem = {
   id: string;
+  name?: string;
   trail: string;
+  trailId?: string;
   date: string;
   km: number;
   time: string;
   synced: boolean;
   startedAt?: string;
   durationSecs?: number;
+  path?: Coordinate[];
+  waypoints?: HikeWaypoint[];
+  pendingSync?: boolean;
+  elevationGainM?: number;
 };
+
+export type HikeWaypoint = Coordinate & {
+  id: string;
+  name: string;
+  createdAt: string;
+};
+
+type PendingHike = HikeHistoryItem & {
+  startedAt: string;
+  path: Coordinate[];
+};
+
+function isCoordinate(value: unknown): value is Coordinate {
+  if (typeof value !== 'object' || value === null) return false;
+  const coordinate = value as Partial<Coordinate>;
+  return (
+    typeof coordinate.latitude === 'number' &&
+    Number.isFinite(coordinate.latitude) &&
+    typeof coordinate.longitude === 'number' &&
+    Number.isFinite(coordinate.longitude) &&
+    coordinate.latitude >= -90 &&
+    coordinate.latitude <= 90 &&
+    coordinate.longitude >= -180 &&
+    coordinate.longitude <= 180 &&
+    (coordinate.altitude === undefined ||
+      coordinate.altitude === null ||
+      (typeof coordinate.altitude === 'number' && Number.isFinite(coordinate.altitude)))
+  );
+}
+
+function isHikeWaypoint(value: unknown): value is HikeWaypoint {
+  return (
+    isCoordinate(value) &&
+    typeof value === 'object' &&
+    value !== null &&
+    'id' in value &&
+    typeof value.id === 'string' &&
+    'name' in value &&
+    typeof value.name === 'string' &&
+    'createdAt' in value &&
+    typeof value.createdAt === 'string'
+  );
+}
 
 function isGuestHike(value: unknown): value is HikeHistoryItem {
   if (typeof value !== 'object' || value === null) return false;
@@ -68,29 +119,39 @@ function isGuestHike(value: unknown): value is HikeHistoryItem {
     typeof hike.date === 'string' &&
     typeof hike.km === 'number' &&
     typeof hike.time === 'string' &&
-    hike.synced === false
+    hike.synced === false &&
+    (hike.path === undefined || (Array.isArray(hike.path) && hike.path.every(isCoordinate)))
   );
 }
 
 async function getLocalFavoriteTrailIds(): Promise<string[]> {
-  const raw = await SecureStore.getItemAsync(FAVORITES_KEY);
-  if (!raw) return [];
+  const raw = await AsyncStorage.getItem(FAVORITES_KEY);
+  if (raw !== null) {
+    const favorites = parseFavoriteTrailIds(raw);
+    if (favorites !== null) return favorites;
+    await AsyncStorage.removeItem(FAVORITES_KEY);
+  }
+
+  const legacyValue = await SecureStore.getItemAsync(FAVORITES_KEY);
+  if (legacyValue === null) return [];
+  const favorites = parseFavoriteTrailIds(legacyValue) ?? [];
+  await AsyncStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
+  await SecureStore.deleteItemAsync(FAVORITES_KEY);
+  return favorites;
+}
+
+function parseFavoriteTrailIds(raw: string): string[] | null {
   try {
     const value: unknown = JSON.parse(raw);
-    if (Array.isArray(value) && value.every((id) => typeof id === 'string')) return value;
-    await SecureStore.deleteItemAsync(FAVORITES_KEY);
-    return [];
+    return Array.isArray(value) && value.every((id) => typeof id === 'string') ? value : null;
   } catch (error) {
-    if (error instanceof SyntaxError) {
-      await SecureStore.deleteItemAsync(FAVORITES_KEY);
-      return [];
-    }
+    if (error instanceof SyntaxError) return null;
     throw error;
   }
 }
 
 async function saveLocalFavoriteTrailIds(ids: string[]) {
-  await SecureStore.setItemAsync(FAVORITES_KEY, JSON.stringify(ids));
+  await AsyncStorage.setItem(FAVORITES_KEY, JSON.stringify(ids));
   return ids;
 }
 
@@ -158,6 +219,17 @@ async function request<T>(
     );
   }
 
+  try {
+    const baseUrl = new URL(API_BASE_URL);
+    if (!['http:', 'https:'].includes(baseUrl.protocol) || !baseUrl.host) {
+      throw new Error('Unsupported URL');
+    }
+  } catch {
+    throw new ApiError(
+      'EXPO_PUBLIC_API_BASE_URL is not a valid URL. Set it to your deployed Trailhead API origin, such as https://your-api.vercel.app.'
+    );
+  }
+
   const token = authenticated ? await getToken() : null;
   if (authenticated && !token) throw new ApiError('Please log in to continue.', 401);
 
@@ -172,8 +244,11 @@ async function request<T>(
         ...options.headers,
       },
     });
-  } catch {
-    throw new ApiError('No internet connection. Check your connection and try again.');
+  } catch (error) {
+    console.error('Trailhead API network request failed:', error);
+    throw new ApiError(
+      'Could not reach the Trailhead API. Check your internet connection and EXPO_PUBLIC_API_BASE_URL, then retry.'
+    );
   }
 
   let responseText: string;
@@ -220,43 +295,59 @@ export async function clearToken() {
 }
 
 async function getGuestHikes(): Promise<HikeHistoryItem[]> {
-  const raw = await SecureStore.getItemAsync(GUEST_HIKES_KEY);
-  if (!raw) return [];
+  const [legacyRaw, localRaw] = await Promise.all([
+    SecureStore.getItemAsync(GUEST_HIKES_KEY),
+    AsyncStorage.getItem(LOCAL_HIKES_KEY),
+  ]);
+  const legacyHikes = legacyRaw ? parseHikeList(legacyRaw) : [];
+  const localHikes = localRaw ? parseHikeList(localRaw) : [];
+  return [...localHikes, ...legacyHikes.filter((legacy) => !localHikes.some((local) => local.id === legacy.id))];
+}
+
+function parseHikeList(raw: string): HikeHistoryItem[] {
   try {
     const hikes: unknown = JSON.parse(raw);
     if (Array.isArray(hikes) && hikes.every(isGuestHike)) return hikes;
-    await SecureStore.deleteItemAsync(GUEST_HIKES_KEY);
     return [];
   } catch (error) {
-    if (error instanceof SyntaxError) {
-      await SecureStore.deleteItemAsync(GUEST_HIKES_KEY);
-      return [];
-    }
+    if (error instanceof SyntaxError) return [];
     throw error;
   }
 }
 
 export async function saveGuestHike(input: {
-  trail: string;
+  id?: string;
+  name?: string;
+  trail?: string;
+  trailId?: string;
   distanceKm: number;
   durationSecs: number;
   startedAt: string;
+  path?: Coordinate[];
+  waypoints?: HikeWaypoint[];
+  pendingSync?: boolean;
 }) {
   const durationMinutes = Math.floor(input.durationSecs / 60);
   const hours = Math.floor(durationMinutes / 60);
   const minutes = durationMinutes % 60;
   const hike: HikeHistoryItem = {
-    id: `${Date.now()}`,
-    trail: input.trail,
+    id: input.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    name: input.name ?? input.trail ?? 'Free hike',
+    trail: input.name ?? input.trail ?? 'Free hike',
+    trailId: input.trailId,
     date: new Date(input.startedAt).toLocaleDateString(),
     km: input.distanceKm,
     time: hours ? `${hours}h ${minutes}m` : `${minutes}m`,
     synced: false,
     startedAt: input.startedAt,
     durationSecs: input.durationSecs,
+    path: input.path,
+    waypoints: input.waypoints ?? [],
+    pendingSync: input.pendingSync ?? false,
   };
   const hikes = await getGuestHikes();
-  await SecureStore.setItemAsync(GUEST_HIKES_KEY, JSON.stringify([hike, ...hikes].slice(0, 5)));
+  const updatedHikes = [hike, ...hikes.filter((savedHike) => savedHike.id !== hike.id)];
+  await AsyncStorage.setItem(LOCAL_HIKES_KEY, JSON.stringify(updatedHikes.slice(0, 50)));
 }
 
 export async function getSavedUser(): Promise<SessionUser | null> {
@@ -330,28 +421,15 @@ export async function getTrail(id: string) {
 }
 
 export async function getFavoriteTrailIds(): Promise<string[]> {
-  if (!(await getToken())) return getLocalFavoriteTrailIds();
-  const response = await request<{ favorites: string[] }>('/api/favorites', {}, true);
-  return response.favorites;
+  return getLocalFavoriteTrailIds();
 }
 
 export async function toggleFavoriteTrail(id: string): Promise<string[]> {
   const favorites = await getFavoriteTrailIds();
   const shouldFavorite = !favorites.includes(id);
-  if (!(await getToken())) {
-    return saveLocalFavoriteTrailIds(
-      shouldFavorite ? [...favorites, id] : favorites.filter((favoriteId) => favoriteId !== id)
-    );
-  }
-
-  await request<{ trail_id: string; favorited: boolean }>(
-    shouldFavorite ? '/api/favorites' : `/api/favorites?trail_id=${encodeURIComponent(id)}`,
-    shouldFavorite
-      ? { method: 'POST', body: JSON.stringify({ trail_id: id }) }
-      : { method: 'DELETE' },
-    true
+  return saveLocalFavoriteTrailIds(
+    shouldFavorite ? [...favorites, id] : favorites.filter((favoriteId) => favoriteId !== id)
   );
-  return getFavoriteTrailIds();
 }
 
 export async function getTrailReviews(id: string): Promise<TrailReviewsResponse> {
@@ -467,49 +545,144 @@ export async function getTrailStats(): Promise<TrailStats> {
 }
 
 export async function saveHike(input: {
-  trailId: string;
+  id: string;
+  name: string;
+  trailId?: string | null;
   distanceKm: number;
   durationSecs: number;
   startedAt: string;
+  path: Coordinate[];
+  waypoints: HikeWaypoint[];
 }) {
   return request('/api/hikes', {
     method: 'POST',
     body: JSON.stringify({
-      trail_id: input.trailId,
+      hike_id: input.id,
+      name: input.name,
+      trail_id: input.trailId ?? null,
       distance_km: input.distanceKm,
       duration_secs: input.durationSecs,
       started_at: input.startedAt,
+      path_json: JSON.stringify(input.path),
+      waypoints_json: JSON.stringify(input.waypoints),
     }),
   }, true);
 }
 
 export async function getHikes(): Promise<HikeHistoryItem[]> {
-  if (!(await getToken())) return getGuestHikes();
+  const localHikes = await getGuestHikes();
+  if (!(await getToken())) return localHikes;
 
-  const response = await request<{
+  let response: {
     hikes: {
       id: string;
-      trail: string;
+      name: string;
+      trail_id: string | null;
       distance_km: number;
       duration_secs: number;
       started_at: string;
       synced_at: string;
+      path_json: string | null;
+      waypoints_json: string | null;
     }[];
-  }>('/api/hikes', {}, true);
+  };
+  try {
+    response = await request('/api/hikes', {}, true);
+  } catch (error) {
+    console.error('Could not load remote hike history:', error);
+    if (localHikes.length) return localHikes;
+    throw error;
+  }
 
-  return response.hikes.map((hike) => {
+  const savedHikes: HikeHistoryItem[] = response.hikes.map((hike) => {
     const durationMinutes = Math.floor(hike.duration_secs / 60);
     const hours = Math.floor(durationMinutes / 60);
     const minutes = durationMinutes % 60;
+    let path: Coordinate[] = [];
+    try {
+      const parsed: unknown = hike.path_json ? JSON.parse(hike.path_json) : [];
+      if (Array.isArray(parsed) && parsed.every(isCoordinate)) path = parsed;
+    } catch (error) {
+      console.error(`Could not parse recorded path for hike ${hike.id}:`, error);
+    }
+    let waypoints: HikeWaypoint[] = [];
+    try {
+      const parsed: unknown = hike.waypoints_json ? JSON.parse(hike.waypoints_json) : [];
+      if (Array.isArray(parsed)) {
+        waypoints = parsed.filter(isHikeWaypoint);
+      }
+    } catch (error) {
+      console.error(`Could not parse waypoints for hike ${hike.id}:`, error);
+    }
     return {
       id: hike.id,
-      trail: hike.trail,
+      name: hike.name || 'Free hike',
+      trailId: hike.trail_id ?? undefined,
+      trail: hike.name || 'Free hike',
       date: new Date(hike.started_at).toLocaleDateString(),
       km: hike.distance_km,
       time: hours ? `${hours}h ${minutes}m` : `${minutes}m`,
       synced: Boolean(hike.synced_at),
       startedAt: hike.started_at,
       durationSecs: hike.duration_secs,
+      path,
+      waypoints,
     };
   });
+  const syncedIds = new Set(savedHikes.map((hike) => hike.id));
+  const unsyncedHikes = localHikes.filter((hike) => !syncedIds.has(hike.id));
+  const pendingHikes = unsyncedHikes.filter(isPendingHike);
+  const pendingIds = new Set(pendingHikes.map((hike) => hike.id));
+  const remainingHikes = unsyncedHikes.filter((hike) => !pendingIds.has(hike.id));
+
+  for (const hike of pendingHikes) {
+    try {
+      await saveHike({
+        id: hike.id,
+        name: hike.name ?? hike.trail,
+        trailId: hike.trailId,
+        distanceKm: hike.km,
+        durationSecs: hike.durationSecs ?? 0,
+        startedAt: hike.startedAt,
+        path: hike.path,
+        waypoints: hike.waypoints ?? [],
+      });
+      savedHikes.unshift({ ...hike, synced: true, pendingSync: false });
+    } catch (error) {
+      console.error(`Could not sync saved hike ${hike.id}:`, error);
+      remainingHikes.push(hike);
+    }
+  }
+  await AsyncStorage.setItem(LOCAL_HIKES_KEY, JSON.stringify(remainingHikes));
+  return [...savedHikes, ...remainingHikes];
+}
+
+export async function getHikeById(id: string): Promise<HikeHistoryItem | null> {
+  return (await getHikes()).find((hike) => hike.id === id) ?? null;
+}
+
+export async function deleteHike(id: string, synced: boolean) {
+  if (synced) {
+    await request<{ deleted: boolean }>('/api/hikes', {
+      method: 'DELETE',
+      body: JSON.stringify({ hike_id: id }),
+    }, true);
+  }
+
+  const [localRaw, legacyRaw] = await Promise.all([
+    AsyncStorage.getItem(LOCAL_HIKES_KEY),
+    SecureStore.getItemAsync(GUEST_HIKES_KEY),
+  ]);
+  const remainingLocal = (localRaw ? parseHikeList(localRaw) : []).filter((hike) => hike.id !== id);
+  const remainingLegacy = (legacyRaw ? parseHikeList(legacyRaw) : []).filter((hike) => hike.id !== id);
+  await Promise.all([
+    AsyncStorage.setItem(LOCAL_HIKES_KEY, JSON.stringify(remainingLocal)),
+    remainingLegacy.length
+      ? SecureStore.setItemAsync(GUEST_HIKES_KEY, JSON.stringify(remainingLegacy))
+      : SecureStore.deleteItemAsync(GUEST_HIKES_KEY),
+  ]);
+}
+
+function isPendingHike(hike: HikeHistoryItem): hike is PendingHike {
+  return Boolean(hike.pendingSync && hike.startedAt && hike.path?.length);
 }

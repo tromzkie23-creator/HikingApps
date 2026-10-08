@@ -7,10 +7,26 @@ export type TrailPresentation = {
 };
 
 const PRESENTATION: Record<string, TrailPresentation> = {
-  '1': { rating: '4.9', tags: ['Views', 'Wildflowers'], park: 'Osmeña Peak Natural Park' },
-  '2': { rating: '4.7', tags: ['Waterfall', 'Camping', 'Forest'], park: 'Tabunan Forest Reserve' },
-  '3': { rating: '4.8', tags: ['Views', 'Camping', 'Ridge'], park: 'Casino Peak Nature Area' },
+  'ph-mt-pulag': { rating: '4.9', tags: ['Summit', 'Alpine'], park: 'Mount Pulag National Park' },
+  'ph-mt-batulao': { rating: '4.8', tags: ['Ridge', 'Views'], park: 'Mount Batulao' },
+  'ph-pico-de-loro': { rating: '4.8', tags: ['Summit', 'Forest'], park: 'Mounts Palay-Palay–Mataas-na-Gulod Protected Landscape' },
+  'ph-mt-ulap': { rating: '4.8', tags: ['Ridge', 'Views'], park: 'Mount Ulap' },
+  'ph-osmena-peak': { rating: '4.9', tags: ['Ridge', 'Views'], park: 'Osmeña Peak' },
+  'ph-kawasan-canyon': { rating: '4.8', tags: ['Waterfall', 'Canyoning'], park: 'Kawasan Falls' },
+  'ph-mt-manunggal': { rating: '4.7', tags: ['Forest', 'History'], park: 'Mount Manunggal' },
+  'ph-mt-apo': { rating: '4.9', tags: ['Summit', 'Forest'], park: 'Mount Apo Natural Park' },
+  'ph-mt-hamiguitan': { rating: '4.8', tags: ['Forest', 'Wildlife'], park: 'Mount Hamiguitan Range Wildlife Sanctuary' },
 };
+
+export type TrailRegion = 'Luzon' | 'Visayas' | 'Mindanao';
+
+export function getTrailRegion(trail: Trail): TrailRegion | null {
+  const area = trail.area.toLowerCase();
+  if (area.includes('luzon')) return 'Luzon';
+  if (area.includes('visayas')) return 'Visayas';
+  if (area.includes('mindanao')) return 'Mindanao';
+  return null;
+}
 
 export function getTrailPresentation(trail: Trail): TrailPresentation {
   return PRESENTATION[trail.id] ?? { rating: '4.8', tags: ['Views'], park: trail.area };
