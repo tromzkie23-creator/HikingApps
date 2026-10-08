@@ -29,6 +29,8 @@ Vercel serverless API backed by Turso/libSQL. The repository-root Vercel project
 `POST /api/upload` accepts a raw JPEG request body (`Content-Type: image/jpeg`), requires a valid JPEG file no larger than 3 MiB, and returns `{ "url": "..." }`.
 `PATCH /api/profile` accepts one or more of `name` (1–100 characters), `bio` (up to 300 characters or `null`), and `avatar_url` (HTTPS URL or `null`). Comments must contain 1–1000 characters.
 
+The root Vercel configuration keeps these public API URLs while consolidating the post collection, detail, likes, and comments endpoints into the single `api/posts.ts` serverless function. Keep Vercel's Root Directory set to the repository root so its `vercel.json` and `trailhead-api/api/` build entries are used. The API folder currently contains 12 function files, within the Hobby plan limit.
+
 ### Add the social feed schema to an existing database
 
 Back up the existing Turso database first. Run the following statements once against the same database used by the API. They do not drop or rewrite existing user, trail, or hike data. SQLite does not support `ADD COLUMN IF NOT EXISTS` consistently across Turso versions, so skip either `ALTER TABLE` statement if that column already exists.
