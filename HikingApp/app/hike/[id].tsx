@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 
 import { getHikeById, type HikeHistoryItem } from '../../lib/api';
 import LeafletMap, { type LeafletMapLayer } from '../../lib/leaflet-map';
@@ -114,6 +114,13 @@ export default function HikeDetail() {
       <View style={{ position: 'absolute', left: 16, right: 16, bottom: 20, backgroundColor: C.white, borderRadius: 18, padding: 16, elevation: 4 }}>
         <Text numberOfLines={1} style={{ color: C.ink, fontSize: 19, fontWeight: '900' }}>{hike.name ?? hike.trail}</Text>
         <Text style={{ color: C.mute, marginTop: 4 }}>{hike.date} · {hike.time}</Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.push(`/create-post?hike_id=${encodeURIComponent(hike.id)}` as Href)}
+          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.spruce, borderRadius: 11, paddingVertical: 11, marginTop: 12 }}>
+          <Ionicons name="share-social-outline" size={17} color={C.white} />
+          <Text style={{ color: C.white, fontWeight: '800' }}>Share to feed</Text>
+        </Pressable>
         <View style={{ flexDirection: 'row', gap: 24, marginTop: 13 }}>
           <Text style={{ color: C.spruce, fontWeight: '800' }}>{hike.km.toFixed(2)} km</Text>
           <Text style={{ color: C.spruce, fontWeight: '800' }}>{elevationGain} m gain</Text>

@@ -65,13 +65,27 @@ CREATE TABLE IF NOT EXISTS reviews (
 CREATE TABLE IF NOT EXISTS posts (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  photo_url TEXT NOT NULL,
+  photo_url TEXT NOT NULL DEFAULT '',
   caption TEXT NOT NULL DEFAULT '',
   place_name TEXT NOT NULL,
   latitude REAL NOT NULL CHECK (latitude BETWEEN -90 AND 90),
   longitude REAL NOT NULL CHECK (longitude BETWEEN -180 AND 180),
   suggest_hike INTEGER NOT NULL DEFAULT 0 CHECK (suggest_hike IN (0, 1)),
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  hike_id TEXT REFERENCES hike_logs(id) ON DELETE SET NULL,
+  hike_distance_km REAL,
+  hike_duration_secs INTEGER,
+  hike_elevation_gain_m INTEGER,
+  hike_path_json TEXT CHECK (hike_path_json IS NULL OR json_valid(hike_path_json)),
+  hide_endpoints INTEGER NOT NULL DEFAULT 1 CHECK (hide_endpoints IN (0, 1))
+);
+
+CREATE TABLE IF NOT EXISTS post_photos (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  photo_url TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 5),
+  UNIQUE (post_id, position)
 );
 
 CREATE TABLE IF NOT EXISTS post_likes (
@@ -89,6 +103,15 @@ CREATE TABLE IF NOT EXISTS post_comments (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS post_reports (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND 500),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  UNIQUE (post_id, user_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_hike_logs_user_started
   ON hike_logs(user_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_waypoints_trail_km
@@ -103,6 +126,10 @@ CREATE INDEX IF NOT EXISTS idx_post_likes_post_id
   ON post_likes(post_id);
 CREATE INDEX IF NOT EXISTS idx_post_comments_post_id
   ON post_comments(post_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_post_photos_post_position
+  ON post_photos(post_id, position);
+CREATE INDEX IF NOT EXISTS idx_post_reports_post_id
+  ON post_reports(post_id, created_at);
 
 DELETE FROM trails
 WHERE id IN ('1', '2', '3')

@@ -37,6 +37,14 @@ export type SocialPost = {
   like_count: number;
   comment_count: number;
   liked_by_me: boolean;
+  photos: { id: string; photo_url: string; position: number }[];
+  hike: {
+    id: string;
+    distance_km: number;
+    duration_secs: number;
+    elevation_gain_m: number;
+    path: Coordinate[];
+  } | null;
 };
 
 export type SocialPostComment = {
@@ -54,12 +62,23 @@ export type SocialProfile = SessionUser & {
 };
 
 export type NewSocialPost = {
-  photoUrl: string;
+  photoUrls: string[];
   caption: string;
-  placeName: string;
-  latitude: number;
-  longitude: number;
-  suggestHike: boolean;
+  placeName?: string;
+  latitude?: number;
+  longitude?: number;
+  hikeId?: string | null;
+  hideEndpoints: boolean;
+};
+
+export type PublicSocialProfile = {
+  id: string;
+  name: string;
+  avatar_url: string | null;
+  bio: string | null;
+  hike_count: number;
+  distance_km: number;
+  post_count: number;
 };
 
 export type ProfileChanges = {
@@ -509,8 +528,11 @@ export async function uploadSocialPhoto(imageUri: string): Promise<string> {
   return body.url;
 }
 
-export async function getSocialPosts(cursor?: string | null) {
-  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+export async function getSocialPosts(cursor?: string | null, authorId?: string) {
+  const params = new URLSearchParams();
+  if (cursor) params.set('cursor', cursor);
+  if (authorId) params.set('author_id', authorId);
+  const query = params.size ? `?${params.toString()}` : '';
   return request<{ posts: SocialPost[]; next_cursor: string | null }>(`/api/posts${query}`, {}, true);
 }
 
@@ -518,14 +540,30 @@ export async function createSocialPost(input: NewSocialPost) {
   return request<{ post: SocialPost }>('/api/posts', {
     method: 'POST',
     body: JSON.stringify({
-      photo_url: input.photoUrl,
+      photo_urls: input.photoUrls,
       caption: input.caption,
-      place_name: input.placeName,
-      latitude: input.latitude,
-      longitude: input.longitude,
-      suggest_hike: input.suggestHike,
+      ...(input.placeName !== undefined ? { place_name: input.placeName } : {}),
+      ...(input.latitude !== undefined ? { latitude: input.latitude } : {}),
+      ...(input.longitude !== undefined ? { longitude: input.longitude } : {}),
+      ...(input.hikeId ? { hike_id: input.hikeId } : {}),
+      hide_endpoints: input.hideEndpoints,
     }),
   }, true);
+}
+
+export async function getSocialPost(postId: string) {
+  return request<{ post: SocialPost }>(`/api/posts/${encodeURIComponent(postId)}`, {}, true);
+}
+
+export async function reportSocialPost(postId: string, reason: string) {
+  return request<{ reported: boolean }>(`/api/posts/${encodeURIComponent(postId)}/report`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  }, true);
+}
+
+export async function getPublicSocialProfile(userId: string) {
+  return request<{ profile: PublicSocialProfile }>(`/api/profile?user_id=${encodeURIComponent(userId)}`, {}, true);
 }
 
 export async function deleteSocialPost(postId: string) {

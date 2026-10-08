@@ -134,6 +134,14 @@ export default function History() {
                 ? <ActivityIndicator color={C.ember} />
                 : <Ionicons name="trash-outline" size={20} color={C.ember} />}
             </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Share ${item.name ?? item.trail} to feed`}
+              onPress={() => router.push(`/create-post?hike_id=${encodeURIComponent(item.id)}` as Href)}
+              hitSlop={8}
+              style={{ width: 44, height: 54, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+              <Ionicons name="share-social-outline" size={20} color={C.spruce} />
+            </Pressable>
           </View>
         )}
       />

@@ -12,9 +12,12 @@ Vercel serverless API backed by Turso/libSQL. The repository-root Vercel project
 | POST | `/api/password` | Yes | Change the signed-in user's password |
 | GET, PATCH | `/api/profile` | Yes | Read or update the signed-in user's profile |
 | GET, POST | `/api/posts` | Yes | List the social feed or create a post |
+| GET | `/api/posts/:id` | Yes | Read post details, photos, and its full attached hike route |
 | DELETE | `/api/posts/:id` | Yes | Delete a post owned by the signed-in user |
 | POST, DELETE | `/api/posts/:id/like` | Yes | Like or unlike a post |
+| POST | `/api/posts/:id/report` | Yes | Report a post |
 | GET, POST | `/api/posts/:id/comments` | Yes | Read or add comments |
+| GET | `/api/profile?user_id=:id` | Yes | Read public profile information and hiking totals |
 | POST | `/api/upload` | Yes | Upload a JPEG photo to public Vercel Blob storage |
 | GET | `/api/trails/:id` | No | Trail and waypoints |
 | GET, POST | `/api/trails/:id/reviews` | POST requires login | Read trail reviews and rating; submit a review |
@@ -25,7 +28,7 @@ Vercel serverless API backed by Turso/libSQL. The repository-root Vercel project
 
 `DELETE /api/hikes` accepts `{ "hike_id": "<id>" }` and removes only a hike owned by the authenticated user.
 `POST /api/password` accepts `{ "current_password": "...", "new_password": "..." }`, verifies the current password, and stores the new password as a bcrypt hash.
-`GET /api/posts` returns up to 10 newest posts and a `next_cursor`; pass that cursor as `?cursor=...` to load the next page. Feed rows include author profile details, like/comment counts, and `liked_by_me`. Posts require an HTTPS `photo_url`, caption up to 500 characters, place name up to 160 characters, valid coordinates, and a boolean `suggest_hike`.
+`GET /api/posts` returns up to 10 newest posts and a `next_cursor`; pass that cursor as `?cursor=...` to load the next page. Feed rows include author profile details, photos, like/comment counts, and `liked_by_me`. Pass `author_id` to list one user's posts. `POST /api/posts` accepts up to six `photo_urls`, a caption up to 500 characters, an optional owned `hike_id`, optional place and coordinates, and `hide_endpoints` (true by default). Attached hikes are snapshotted with their stats and route; with endpoint hiding enabled, the first and last 200 metres are trimmed before storage and responses. List results simplify attached routes to at most 150 points, while a post detail returns the full saved route. `POST /api/posts/:id/report` accepts a reason up to 500 characters.
 `POST /api/upload` accepts a raw JPEG request body (`Content-Type: image/jpeg`), requires a valid JPEG file no larger than 3 MiB, and returns `{ "url": "..." }`.
 `PATCH /api/profile` accepts one or more of `name` (1–100 characters), `bio` (up to 300 characters or `null`), and `avatar_url` (HTTPS URL or `null`). Comments must contain 1–1000 characters.
 
@@ -75,6 +78,14 @@ CREATE INDEX IF NOT EXISTS idx_post_likes_post_id
 CREATE INDEX IF NOT EXISTS idx_post_comments_post_id
   ON post_comments(post_id, created_at);
 ```
+
+For the multi-photo hiking feed migration specifically, back up first and inspect `PRAGMA table_info(posts);`. Apply the statements in [`migrations/social-hiking-feed.sql`](./migrations/social-hiking-feed.sql), skipping only `ALTER TABLE` statements for columns already present. This migration adds the nullable hike link and snapshots, creates photo/report tables and missing likes/comments tables, adds indexes, and copies legacy `photo_url` values into the carousel table. From the repository root:
+
+```powershell
+Get-Content .\trailhead-api\migrations\social-hiking-feed.sql -Raw | turso db shell hikingdatabase
+```
+
+Use the actual database name configured for the deployed API. Verify with `PRAGMA table_info(posts);`, `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('post_photos', 'post_likes', 'post_comments', 'post_reports');`, and `PRAGMA foreign_key_check;`.
 
 Run the statements with `turso db shell <your-database-name>` after selecting the correct database, or save them in a SQL file and pipe it to the shell. If a `users` column already exists, omit only that column's `ALTER TABLE` statement. Verify the tables and columns afterward with `PRAGMA table_info(users);`, `PRAGMA foreign_key_check;`, and `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'post%';`.
 

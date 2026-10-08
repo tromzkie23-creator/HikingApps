@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Linking, Pressable, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import { useFocusEffect, useRouter, type Href } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 
 import { ApiError, getToken, saveGuestHike, saveHike, type HikeWaypoint } from '../../lib/api';
 import LeafletMap, { type LeafletMapLayer } from '../../lib/leaflet-map';
@@ -68,6 +68,19 @@ function defaultHikeName(date: string) {
 
 export default function Record() {
   const router = useRouter();
+  const routeParams = useLocalSearchParams<{
+    destinationLat?: string;
+    destinationLng?: string;
+    destinationName?: string;
+  }>();
+  const initialDestination = (() => {
+    const latitude = Number(routeParams.destinationLat);
+    const longitude = Number(routeParams.destinationLng);
+    if (!routeParams.destinationLat || !routeParams.destinationLng ||
+      !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+      latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+    return { latitude, longitude, name: routeParams.destinationName || 'Shared hike location' };
+  })();
   const liveLocationRef = useRef<Coordinate | null>(null);
   const pathRef = useRef<Coordinate[]>([]);
   const lastPointRef = useRef<Coordinate | null>(null);
@@ -95,7 +108,7 @@ export default function Record() {
   const [search, setSearch] = useState('');
   const [searchMessage, setSearchMessage] = useState('');
   const [searching, setSearching] = useState(false);
-  const [destination, setDestination] = useState<Destination | null>(null);
+  const [destination, setDestination] = useState<Destination | null>(initialDestination);
   const [routeOrigin, setRouteOrigin] = useState<Coordinate | null>(null);
   const [walkingRoute, setWalkingRoute] = useState<Coordinate[]>([]);
   const [routeMessage, setRouteMessage] = useState('');
@@ -105,6 +118,13 @@ export default function Record() {
   const [hikeName, setHikeName] = useState('');
   const [saving, setSaving] = useState(false);
   useFocusEffect(useCallback(() => {
+    const latitude = Number(routeParams.destinationLat);
+    const longitude = Number(routeParams.destinationLng);
+    if (routeParams.destinationLat && routeParams.destinationLng &&
+      Number.isFinite(latitude) && Number.isFinite(longitude) &&
+      latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
+      setDestination({ latitude, longitude, name: routeParams.destinationName || 'Shared hike location' });
+    }
     setFocused(true);
     let active = true;
     async function checkLocation() {
@@ -132,7 +152,7 @@ export default function Record() {
       active = false;
       setFocused(false);
     };
-  }, []));
+  }, [routeParams.destinationLat, routeParams.destinationLng, routeParams.destinationName]));
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -213,6 +233,7 @@ export default function Record() {
       liveLocationRef.current = point;
       setLiveLocation(point);
       setLocationMessage('');
+      if (destination) setRouteOrigin((current) => current ?? point);
       if (!recordingRef.current || pausedRef.current || modeRef.current !== 'recording') return;
       const previous = lastPointRef.current;
       if (previous) {
@@ -238,7 +259,7 @@ export default function Record() {
       active = false;
       subscription?.remove();
     };
-  }, [focused, permissionStatus, servicesEnabled]);
+  }, [destination, focused, permissionStatus, servicesEnabled]);
 
   useEffect(() => {
     if (mode !== 'recording' || paused) return;

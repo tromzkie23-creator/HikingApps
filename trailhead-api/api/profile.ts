@@ -46,6 +46,33 @@ export default async function profile(request: ApiRequest, response: ApiResponse
 
   try {
     if (request.method === 'GET') {
+      const requestedUserId = request.query.user_id;
+      if (requestedUserId !== undefined) {
+        if (Array.isArray(requestedUserId) || !requestedUserId || requestedUserId.length > 100) {
+          return response.status(400).json({ error: 'The profile ID is invalid.' });
+        }
+        const publicResult = await db.execute({
+          sql: `SELECT u.id, u.name, u.avatar_url, u.bio,
+                       COUNT(h.id) AS hike_count, COALESCE(SUM(h.distance_km), 0) AS distance_km,
+                       (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id) AS post_count
+                FROM users u LEFT JOIN hike_logs h ON h.user_id = u.id
+                WHERE u.id = ? GROUP BY u.id LIMIT 1`,
+          args: [requestedUserId],
+        });
+        const row = publicResult.rows[0];
+        if (!row) return response.status(404).json({ error: 'Profile not found.' });
+        return response.status(200).json({
+          profile: {
+            id: String(row.id),
+            name: String(row.name),
+            avatar_url: row.avatar_url === null ? null : String(row.avatar_url),
+            bio: row.bio === null ? null : String(row.bio),
+            hike_count: Number(row.hike_count),
+            distance_km: Number(row.distance_km),
+            post_count: Number(row.post_count),
+          },
+        });
+      }
       const current = await readProfile(userId);
       if (!current) return response.status(404).json({ error: 'Profile not found.' });
       return response.status(200).json({ profile: current });
