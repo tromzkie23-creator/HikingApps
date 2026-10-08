@@ -55,68 +55,55 @@
   "rewrites": [
     {
       "source": "/api/favorites",
-      "destination": "/trailhead-api/api/favorites.ts",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/favorites.ts"
     },
     {
       "source": "/api/stats",
-      "destination": "/trailhead-api/api/stats.ts",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/stats.ts"
     },
     {
       "source": "/api/trails/:id/reviews",
-      "destination": "/trailhead-api/api/trails/[id]/reviews.ts?id=:id",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/trails/[id]/reviews.ts?id=:id"
     },
     {
       "source": "/api/trails",
-      "destination": "/trailhead-api/api/trails/index.ts",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/trails/index.ts"
     },
     {
       "source": "/api/trails/:id",
-      "destination": "/trailhead-api/api/trails/[id].ts?id=:id",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/trails/[id].ts?id=:id"
     },
     {
       "source": "/api/login",
-      "destination": "/trailhead-api/api/login.ts",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/login.ts"
     },
     {
       "source": "/api/password",
-      "destination": "/trailhead-api/api/password.ts",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/password.ts"
     },
     {
       "source": "/api/profile",
-      "destination": "/trailhead-api/api/profile.ts",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/profile.ts"
     },
     {
       "source": "/api/posts",
-      "destination": "/trailhead-api/api/posts.ts?__posts_path=/api/posts",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/posts.ts?__posts_path=/api/posts"
     },
     {
       "source": "/api/posts/:path*",
-      "destination": "/trailhead-api/api/posts.ts?__posts_path=/api/posts/:path*",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/posts.ts?__posts_path=/api/posts/:path*"
     },
     {
       "source": "/api/upload",
-      "destination": "/trailhead-api/api/upload.ts",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/upload.ts"
     },
     {
       "source": "/api/register",
-      "destination": "/trailhead-api/api/register.ts",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/register.ts"
     },
     {
       "source": "/api/hikes",
-      "destination": "/trailhead-api/api/hikes/index.ts",
-      "preserveQueryParams": true
+      "destination": "/trailhead-api/api/hikes/index.ts"
     }
   ]
 }
