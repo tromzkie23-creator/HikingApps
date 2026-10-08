@@ -9,6 +9,13 @@ Vercel serverless API backed by Turso/libSQL. The repository-root Vercel project
 | POST | `/api/register` | No | Create account and return JWT |
 | POST | `/api/login` | No | Verify password and return JWT |
 | GET | `/api/trails` | No | List trails |
+| POST | `/api/password` | Yes | Change the signed-in user's password |
+| GET, PATCH | `/api/profile` | Yes | Read or update the signed-in user's profile |
+| GET, POST | `/api/posts` | Yes | List the social feed or create a post |
+| DELETE | `/api/posts/:id` | Yes | Delete a post owned by the signed-in user |
+| POST, DELETE | `/api/posts/:id/like` | Yes | Like or unlike a post |
+| GET, POST | `/api/posts/:id/comments` | Yes | Read or add comments |
+| POST | `/api/upload` | Yes | Upload a JPEG photo to public Vercel Blob storage |
 | GET | `/api/trails/:id` | No | Trail and waypoints |
 | GET, POST | `/api/trails/:id/reviews` | POST requires login | Read trail reviews and rating; submit a review |
 | GET, POST, DELETE | `/api/favorites` | Yes | Read, save, or remove the current user's saved trails |
@@ -17,6 +24,69 @@ Vercel serverless API backed by Turso/libSQL. The repository-root Vercel project
 | GET | `/api/hikes` | Bearer JWT | Current user's hike history |
 
 `DELETE /api/hikes` accepts `{ "hike_id": "<id>" }` and removes only a hike owned by the authenticated user.
+`POST /api/password` accepts `{ "current_password": "...", "new_password": "..." }`, verifies the current password, and stores the new password as a bcrypt hash.
+`GET /api/posts` returns up to 10 newest posts and a `next_cursor`; pass that cursor as `?cursor=...` to load the next page. Feed rows include author profile details, like/comment counts, and `liked_by_me`. Posts require an HTTPS `photo_url`, caption up to 500 characters, place name up to 160 characters, valid coordinates, and a boolean `suggest_hike`.
+`POST /api/upload` accepts a raw JPEG request body (`Content-Type: image/jpeg`), requires a valid JPEG file no larger than 3 MiB, and returns `{ "url": "..." }`.
+`PATCH /api/profile` accepts one or more of `name` (1–100 characters), `bio` (up to 300 characters or `null`), and `avatar_url` (HTTPS URL or `null`). Comments must contain 1–1000 characters.
+
+### Add the social feed schema to an existing database
+
+Back up the existing Turso database first. Run the following statements once against the same database used by the API. They do not drop or rewrite existing user, trail, or hike data. SQLite does not support `ADD COLUMN IF NOT EXISTS` consistently across Turso versions, so skip either `ALTER TABLE` statement if that column already exists.
+
+```sql
+PRAGMA foreign_keys = ON;
+
+ALTER TABLE users ADD COLUMN avatar_url TEXT;
+ALTER TABLE users ADD COLUMN bio TEXT;
+
+CREATE TABLE IF NOT EXISTS posts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  photo_url TEXT NOT NULL,
+  caption TEXT NOT NULL DEFAULT '',
+  place_name TEXT NOT NULL,
+  latitude REAL NOT NULL CHECK (latitude BETWEEN -90 AND 90),
+  longitude REAL NOT NULL CHECK (longitude BETWEEN -180 AND 180),
+  suggest_hike INTEGER NOT NULL DEFAULT 0 CHECK (suggest_hike IN (0, 1)),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS post_likes (
+  post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (post_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS post_comments (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 1000),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_posts_created_at
+  ON posts(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_post_likes_post_id
+  ON post_likes(post_id);
+CREATE INDEX IF NOT EXISTS idx_post_comments_post_id
+  ON post_comments(post_id, created_at);
+```
+
+Run the statements with `turso db shell <your-database-name>` after selecting the correct database, or save them in a SQL file and pipe it to the shell. If a `users` column already exists, omit only that column's `ALTER TABLE` statement. Verify the tables and columns afterward with `PRAGMA table_info(users);`, `PRAGMA foreign_key_check;`, and `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'post%';`.
+
+### Configure Vercel Blob
+
+In Vercel, open the Trailhead project **Storage** tab → **Create Storage** → **Blob** → choose **Public** access and create the store. Under the store's **Projects** tab, connect it to Trailhead and enable Production, Preview, and Development as needed. Vercel adds `BLOB_READ_WRITE_TOKEN` to the selected project environments automatically. If setting it manually, run the relevant command from the repository root and paste the store's read-write token when prompted:
+
+```sh
+npx vercel@latest env add BLOB_READ_WRITE_TOKEN production
+npx vercel@latest env add BLOB_READ_WRITE_TOKEN preview
+npx vercel@latest env add BLOB_READ_WRITE_TOKEN development
+```
+
+Do not put this token in the Expo app or commit it. Redeploy after changing environment variables. For local API development, pull development values with `npx vercel@latest env pull .env.local`; do not print or share that file.
 
 ## Apply schema changes to an existing Turso database
 
@@ -29,14 +99,13 @@ Get-Content .\trailhead-api\schema.sql -Raw | turso db shell hikingdatabase
 
 The schema uses `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, and `INSERT OR IGNORE`. It replaces the three legacy sample trails with nine Philippine trail entries. A legacy trail is retained only if an existing hike log references it, so hike history is not deleted; unreferenced legacy trails (and their dependent waypoints, reviews, and server-side favorites) are removed. The nine new trail IDs are stable, so rerunning the schema does not duplicate them. This does not require changing any Vercel environment variables.
 
-### Enable named free hikes on an existing database
+### Upgrade the existing database for the current API
 
-Before deploying the free-hike API, migrate an existing `hike_logs` table. This preserves hike rows, allows a nullable `trail_id`, and adds a hike name and waypoint JSON. Back up first. This migration assumes the previous `path_json` column has already been added; if not, add that column first using the migration instructions from the earlier release.
+The current API needs `reviews`, `favorites`, and the free-hike columns on `hike_logs`. Run this migration once against the same Turso database configured in Vercel. It handles the original hike-log schema (`id`, `user_id`, `trail_id`, `distance_km`, `duration_secs`, `started_at`, and `synced_at`), preserves every hike row, and uses the linked trail name for existing hikes. Old hikes have no recorded GPS path, so their path and waypoint data start as empty JSON arrays. Back up the database before running a production migration.
 
 Run this SQL once in the Turso shell:
 
 ```sql
-PRAGMA foreign_keys = OFF;
 BEGIN IMMEDIATE;
 
 CREATE TABLE hike_logs_new (
@@ -55,20 +124,42 @@ CREATE TABLE hike_logs_new (
 INSERT INTO hike_logs_new
   (id, user_id, trail_id, name, distance_km, duration_secs, path_json, waypoints_json, started_at, synced_at)
 SELECT h.id, h.user_id, h.trail_id, COALESCE(t.name, ''), h.distance_km, h.duration_secs,
-       h.path_json, '[]', h.started_at, h.synced_at
+       '[]', '[]', h.started_at, h.synced_at
 FROM hike_logs h
 LEFT JOIN trails t ON t.id = h.trail_id;
 
 DROP TABLE hike_logs;
 ALTER TABLE hike_logs_new RENAME TO hike_logs;
-CREATE INDEX idx_hike_logs_user_started ON hike_logs(user_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hike_logs_user_started
+  ON hike_logs(user_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS favorites (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (user_id, trail_id)
+);
+
+CREATE TABLE IF NOT EXISTS reviews (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  UNIQUE (user_id, trail_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_favorites_user
+  ON favorites(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reviews_trail_created
+  ON reviews(trail_id, created_at DESC);
 
 COMMIT;
-PRAGMA foreign_keys = ON;
 PRAGMA foreign_key_check;
 ```
 
-New databases get these fields and nullable trail references from `schema.sql`. Unsynced hikes remain on-device and retry when History loads while signed in.
+Afterward, `PRAGMA foreign_key_check` should return no rows. `GET /api/trails` can calculate ratings, and the hike endpoints can read and write named free hikes. New databases get these tables and fields from `schema.sql`. Unsynced hikes remain on-device and retry when History loads while signed in.
 
 ## Create and seed Turso
 
@@ -115,9 +206,11 @@ From the Expo project root:
 ```sh
 npx expo install expo-secure-store
 npx expo install @react-native-async-storage/async-storage
+npx expo install expo-image-picker
+npx expo install expo-image-manipulator
 ```
 
-Favorites are stored locally with AsyncStorage; credentials continue to use SecureStore. The app uses the built-in `fetch`; no separate HTTP client is required. If a dependency is already installed, no install is needed.
+Favorites and profile pictures are stored locally with AsyncStorage; profile pictures do not upload to the API. Credentials continue to use SecureStore. The app uses the built-in `fetch`; no separate HTTP client is required. If a dependency is already installed, no install is needed.
 
 ## Security notes
 

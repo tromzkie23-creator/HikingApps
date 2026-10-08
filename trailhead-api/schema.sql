@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL COLLATE NOCASE UNIQUE,
   password_hash TEXT NOT NULL,
+  avatar_url TEXT,
+  bio TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -60,6 +62,33 @@ CREATE TABLE IF NOT EXISTS reviews (
   UNIQUE (user_id, trail_id)
 );
 
+CREATE TABLE IF NOT EXISTS posts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  photo_url TEXT NOT NULL,
+  caption TEXT NOT NULL DEFAULT '',
+  place_name TEXT NOT NULL,
+  latitude REAL NOT NULL CHECK (latitude BETWEEN -90 AND 90),
+  longitude REAL NOT NULL CHECK (longitude BETWEEN -180 AND 180),
+  suggest_hike INTEGER NOT NULL DEFAULT 0 CHECK (suggest_hike IN (0, 1)),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS post_likes (
+  post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (post_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS post_comments (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 1000),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_hike_logs_user_started
   ON hike_logs(user_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_waypoints_trail_km
@@ -68,6 +97,12 @@ CREATE INDEX IF NOT EXISTS idx_favorites_user
   ON favorites(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reviews_trail_created
   ON reviews(trail_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_created_at
+  ON posts(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_post_likes_post_id
+  ON post_likes(post_id);
+CREATE INDEX IF NOT EXISTS idx_post_comments_post_id
+  ON post_comments(post_id, created_at);
 
 DELETE FROM trails
 WHERE id IN ('1', '2', '3')

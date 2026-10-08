@@ -8,6 +8,34 @@
       "use": "@vercel/node"
     },
     {
+      "src": "trailhead-api/api/password.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "trailhead-api/api/profile.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "trailhead-api/api/posts/index.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "trailhead-api/api/posts/[id].ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "trailhead-api/api/posts/[id]/like.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "trailhead-api/api/posts/[id]/comments.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "trailhead-api/api/upload.ts",
+      "use": "@vercel/node"
+    },
+    {
       "src": "trailhead-api/api/register.ts",
       "use": "@vercel/node"
     },
@@ -60,6 +88,34 @@
     {
       "src": "^/api/login/?$",
       "dest": "/trailhead-api/api/login.ts"
+    },
+    {
+      "src": "^/api/password/?$",
+      "dest": "/trailhead-api/api/password.ts"
+    },
+    {
+      "src": "^/api/profile/?$",
+      "dest": "/trailhead-api/api/profile.ts"
+    },
+    {
+      "src": "^/api/posts/?$",
+      "dest": "/trailhead-api/api/posts/index.ts"
+    },
+    {
+      "src": "^/api/posts/([^/]+)/like/?$",
+      "dest": "/trailhead-api/api/posts/[id]/like.ts?id=$1"
+    },
+    {
+      "src": "^/api/posts/([^/]+)/comments/?$",
+      "dest": "/trailhead-api/api/posts/[id]/comments.ts?id=$1"
+    },
+    {
+      "src": "^/api/posts/([^/]+)/?$",
+      "dest": "/trailhead-api/api/posts/[id].ts?id=$1"
+    },
+    {
+      "src": "^/api/upload/?$",
+      "dest": "/trailhead-api/api/upload.ts"
     },
     {
       "src": "^/api/register/?$",

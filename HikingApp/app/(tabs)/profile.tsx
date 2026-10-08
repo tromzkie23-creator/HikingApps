@@ -1,10 +1,24 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
-import { ApiError, clearToken, getSavedUser, getToken, getTrailStats, type SessionUser, type TrailStats } from '../../lib/api';
+import {
+  ApiError,
+  changePassword,
+  clearToken,
+  getSocialProfile,
+  getSavedUser,
+  getToken,
+  getTrailStats,
+  updateSocialProfile,
+  uploadSocialPhoto,
+  type SessionUser,
+  type TrailStats,
+} from '../../lib/api';
 import { C } from '../../lib/theme';
 
 const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -25,20 +39,69 @@ function formatMovingTime(seconds: number) {
   return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
+function getInitials(name: string) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toLocaleUpperCase())
+    .join('') || 'TH';
+}
+
 export default function Profile() {
   const router = useRouter();
   const [user, setUser] = useState<SessionUser | null>(null);
   const [stats, setStats] = useState<TrailStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [settingsError, setSettingsError] = useState('');
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileForm, setProfileForm] = useState({ name: '', bio: '' });
+  const [profileMessage, setProfileMessage] = useState('');
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState('');
+  const [passwordForm, setPasswordForm] = useState({
+    current: '',
+    next: '',
+    confirmation: '',
+  });
 
   const loadStats = useCallback(async () => {
     setLoading(true);
     setError('');
+    setSettingsError('');
     try {
-      const [savedUser, token, loadedStats] = await Promise.all([getSavedUser(), getToken(), getTrailStats()]);
-      setUser(token ? savedUser : null);
-      setStats(loadedStats);
+      const [savedUser, token] = await Promise.all([getSavedUser(), getToken()]);
+      const activeUser = token ? savedUser : null;
+      setUser(activeUser);
+      if (token) {
+        const [profileResult, statsResult] = await Promise.allSettled([getSocialProfile(), getTrailStats()]);
+        if (profileResult.status === 'fulfilled') {
+          setUser(profileResult.value);
+          setProfileForm({ name: profileResult.value.name, bio: profileResult.value.bio ?? '' });
+        } else {
+          setSettingsError(
+            profileResult.reason instanceof ApiError
+              ? profileResult.reason.message
+              : 'Could not load your profile. Please try again.'
+          );
+        }
+        if (statsResult.status === 'fulfilled') {
+          setStats(statsResult.value);
+        } else {
+          setStats(null);
+          setError(
+            statsResult.reason instanceof ApiError
+              ? statsResult.reason.message
+              : 'Could not load your hiking stats. Please try again.'
+          );
+        }
+      } else {
+        setStats(null);
+        setError('Sign in to view your hiking stats.');
+      }
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Could not load your hiking stats. Please try again.');
     } finally {
@@ -53,6 +116,110 @@ export default function Profile() {
   async function logout() {
     await clearToken();
     router.replace('/');
+  }
+
+  async function chooseProfilePhoto() {
+    setSettingsError('');
+    setProfileMessage('');
+    if (!user) {
+      setSettingsError('Sign in to upload a profile picture.');
+      return;
+    }
+    setProfileBusy(true);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 1,
+      });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      if (!asset?.uri) throw new Error('The image picker returned no image.');
+      const context = ImageManipulator.manipulate(asset.uri);
+      context.resize({ width: 512, height: 512 });
+      const processedImage = await context.renderAsync();
+      const jpeg = await processedImage.saveAsync({
+        compress: 0.7,
+        format: SaveFormat.JPEG,
+      });
+      const avatarUrl = await uploadSocialPhoto(jpeg.uri);
+      const updatedUser = await updateSocialProfile({ avatarUrl });
+      setUser(updatedUser);
+      setProfileMessage('Profile picture updated.');
+    } catch (cause) {
+      console.error('Could not save profile photo:', cause);
+      setSettingsError(cause instanceof ApiError ? cause.message : 'Could not save your photo. Please try again.');
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  async function removeProfilePhoto() {
+    if (!user) return;
+    setProfileBusy(true);
+    try {
+      const updatedUser = await updateSocialProfile({ avatarUrl: null });
+      setUser(updatedUser);
+      setSettingsError('');
+      setProfileMessage('Profile picture removed.');
+    } catch (cause) {
+      console.error('Could not remove profile photo:', cause);
+      setSettingsError(cause instanceof ApiError ? cause.message : 'Could not remove your photo. Please try again.');
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  async function saveProfileDetails() {
+    setProfileMessage('');
+    setSettingsError('');
+    const name = profileForm.name.trim();
+    const bio = profileForm.bio.trim();
+    if (name.length < 1 || name.length > 100) {
+      setSettingsError('Name must be between 1 and 100 characters.');
+      return;
+    }
+    if (bio.length > 300) {
+      setSettingsError('Bio must be 300 characters or fewer.');
+      return;
+    }
+    setProfileBusy(true);
+    try {
+      const updatedUser = await updateSocialProfile({ name, bio: bio || null });
+      setUser(updatedUser);
+      setProfileForm({ name: updatedUser.name, bio: updatedUser.bio ?? '' });
+      setProfileMessage('Profile updated.');
+    } catch (cause) {
+      setSettingsError(cause instanceof ApiError ? cause.message : 'Could not save your profile. Please try again.');
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  async function submitPasswordChange() {
+    setPasswordMessage('');
+    setSettingsError('');
+    if (!passwordForm.current || passwordForm.next.length < 6) {
+      setSettingsError('Enter your current password and a new password with at least 6 characters.');
+      return;
+    }
+    if (passwordForm.next !== passwordForm.confirmation) {
+      setSettingsError('Your new password and confirmation do not match.');
+      return;
+    }
+
+    setPasswordBusy(true);
+    try {
+      await changePassword(passwordForm.current, passwordForm.next);
+      setPasswordForm({ current: '', next: '', confirmation: '' });
+      setPasswordMessage('Password updated successfully.');
+      setPasswordOpen(false);
+    } catch (cause) {
+      setSettingsError(cause instanceof ApiError ? cause.message : 'Could not change your password. Please try again.');
+    } finally {
+      setPasswordBusy(false);
+    }
   }
 
   const monthlyValues = useMemo(() => stats?.monthlyDistance ?? [], [stats]);
@@ -75,6 +242,153 @@ export default function Profile() {
       </View>
       <Text style={{ color: C.mute, marginTop: 5, marginBottom: 19 }}>{user?.name ?? 'Hiking as a guest'}</Text>
 
+      <Text style={{ color: C.ink, fontSize: 19, fontWeight: '800', marginBottom: 12 }}>Profile settings</Text>
+      <View style={{ backgroundColor: C.white, borderRadius: 19, borderWidth: 1, borderColor: C.line, padding: 17 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+          <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', backgroundColor: '#E3EBDD', alignItems: 'center', justifyContent: 'center' }}>
+            {user?.avatar_url ? (
+              <Image source={{ uri: user.avatar_url }} style={{ width: 72, height: 72 }} />
+            ) : (
+              <Text style={{ color: C.spruce, fontSize: 24, fontWeight: '900' }}>{getInitials(user?.name ?? '')}</Text>
+            )}
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: C.ink, fontSize: 15, fontWeight: '800' }}>Profile picture</Text>
+            <Text style={{ color: C.mute, fontSize: 12, marginTop: 4 }}>
+              {user ? 'Your photo appears on your feed posts.' : 'Sign in to upload a profile picture.'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 14, marginTop: 9 }}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={profileBusy || !user}
+                onPress={() => void chooseProfilePhoto()}>
+                <Text style={{ color: user ? C.spruce : C.mute, fontWeight: '800' }}>
+                  {profileBusy ? 'Uploading…' : user?.avatar_url ? 'Change photo' : 'Add photo'}
+                </Text>
+              </Pressable>
+              {user?.avatar_url && (
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={profileBusy}
+                  onPress={() => void removeProfilePhoto()}>
+                  <Text style={{ color: C.ember, fontWeight: '700' }}>Remove</Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
+        </View>
+
+        <View style={{ height: 1, backgroundColor: C.line, marginVertical: 17 }} />
+        <Text style={{ color: C.ink, fontSize: 15, fontWeight: '800' }}>About you</Text>
+        {user ? (
+          <View style={{ marginTop: 12, gap: 11 }}>
+            <View>
+              <Text style={{ color: C.ink, fontSize: 13, fontWeight: '700', marginBottom: 6 }}>Name</Text>
+              <TextInput
+                accessibilityLabel="Profile name"
+                value={profileForm.name}
+                onChangeText={(name) => setProfileForm((form) => ({ ...form, name }))}
+                maxLength={100}
+                placeholder="Your name"
+                placeholderTextColor={C.mute}
+                autoCapitalize="words"
+                style={{ borderWidth: 1, borderColor: C.line, backgroundColor: C.bg, color: C.ink, borderRadius: 11, paddingHorizontal: 13, paddingVertical: 12 }}
+              />
+            </View>
+            <View>
+              <Text style={{ color: C.ink, fontSize: 13, fontWeight: '700', marginBottom: 6 }}>Bio</Text>
+              <TextInput
+                accessibilityLabel="Profile bio"
+                value={profileForm.bio}
+                onChangeText={(bio) => setProfileForm((form) => ({ ...form, bio }))}
+                maxLength={300}
+                multiline
+                textAlignVertical="top"
+                placeholder="Tell hikers a little about yourself"
+                placeholderTextColor={C.mute}
+                style={{ minHeight: 82, borderWidth: 1, borderColor: C.line, backgroundColor: C.bg, color: C.ink, borderRadius: 11, paddingHorizontal: 13, paddingVertical: 12 }}
+              />
+              <Text style={{ color: C.mute, fontSize: 11, textAlign: 'right', marginTop: 4 }}>{profileForm.bio.length}/300</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              disabled={profileBusy}
+              onPress={() => void saveProfileDetails()}
+              style={{ backgroundColor: profileBusy ? C.mute : C.spruce, padding: 13, borderRadius: 11, alignItems: 'center' }}>
+              {profileBusy ? (
+                <ActivityIndicator color={C.white} />
+              ) : (
+                <Text style={{ color: C.white, fontWeight: '800' }}>Save profile</Text>
+              )}
+            </Pressable>
+          </View>
+        ) : (
+          <Text style={{ color: C.mute, fontSize: 13, marginTop: 8 }}>Sign in to edit your name and bio.</Text>
+        )}
+
+        <View style={{ height: 1, backgroundColor: C.line, marginVertical: 17 }} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: C.ink, fontSize: 15, fontWeight: '800' }}>Password</Text>
+            <Text style={{ color: C.mute, fontSize: 12, marginTop: 4 }}>
+              {user ? 'Keep your account secure with a new password.' : 'Sign in to change your password.'}
+            </Text>
+          </View>
+          {user && (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setSettingsError('');
+                setPasswordMessage('');
+                setPasswordOpen((open) => !open);
+              }}
+              style={{ paddingVertical: 9, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#E3EBDD' }}>
+              <Text style={{ color: C.spruce, fontWeight: '800' }}>{passwordOpen ? 'Cancel' : 'Change'}</Text>
+            </Pressable>
+          )}
+        </View>
+
+        {user && passwordOpen && (
+          <View style={{ marginTop: 16, gap: 11 }}>
+            {([
+              { key: 'current', label: 'Current password', placeholder: 'Enter current password' },
+              { key: 'next', label: 'New password', placeholder: 'At least 6 characters' },
+              { key: 'confirmation', label: 'Confirm new password', placeholder: 'Enter it again' },
+            ] as const).map((field) => (
+              <View key={field.key}>
+                <Text style={{ color: C.ink, fontSize: 13, fontWeight: '700', marginBottom: 6 }}>{field.label}</Text>
+                <TextInput
+                  accessibilityLabel={field.label}
+                  value={passwordForm[field.key]}
+                  onChangeText={(value) => setPasswordForm((form) => ({ ...form, [field.key]: value }))}
+                  placeholder={field.placeholder}
+                  placeholderTextColor={C.mute}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  textContentType={field.key === 'current' ? 'password' : 'newPassword'}
+                  style={{ borderWidth: 1, borderColor: C.line, backgroundColor: C.bg, color: C.ink, borderRadius: 11, paddingHorizontal: 13, paddingVertical: 12 }}
+                />
+              </View>
+            ))}
+            <Pressable
+              accessibilityRole="button"
+              disabled={passwordBusy}
+              onPress={() => void submitPasswordChange()}
+              style={{ backgroundColor: passwordBusy ? C.mute : C.spruce, padding: 14, borderRadius: 11, alignItems: 'center', marginTop: 2 }}>
+              {passwordBusy ? (
+                <ActivityIndicator color={C.white} />
+              ) : (
+                <Text style={{ color: C.white, fontWeight: '800' }}>Update password</Text>
+              )}
+            </Pressable>
+          </View>
+        )}
+        {!!profileMessage && <Text accessibilityLiveRegion="polite" style={{ color: C.spruce, marginTop: 13 }}>{profileMessage}</Text>}
+        {!!passwordMessage && <Text accessibilityLiveRegion="polite" style={{ color: C.spruce, marginTop: 13 }}>{passwordMessage}</Text>}
+        {!!settingsError && <Text accessibilityRole="alert" style={{ color: C.ember, marginTop: 13 }}>{settingsError}</Text>}
+      </View>
+
       {loading ? (
         <View style={{ padding: 35, alignItems: 'center', gap: 12 }}>
           <ActivityIndicator color={C.spruce} />
@@ -83,8 +397,8 @@ export default function Profile() {
       ) : error || !stats ? (
         <View style={{ backgroundColor: C.white, borderRadius: 16, padding: 18, gap: 12 }}>
           <Text accessibilityRole="alert" style={{ color: C.ember }}>{error || 'Stats are unavailable.'}</Text>
-          <Pressable accessibilityRole="button" onPress={() => void loadStats()}>
-            <Text style={{ color: C.spruce, fontWeight: '800' }}>Try again</Text>
+          <Pressable accessibilityRole="button" onPress={() => user ? void loadStats() : router.replace('/')}>
+            <Text style={{ color: C.spruce, fontWeight: '800' }}>{user ? 'Try again' : 'Sign in'}</Text>
           </Pressable>
         </View>
       ) : (

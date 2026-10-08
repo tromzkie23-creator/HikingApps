@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { File } from 'expo-file-system';
+import { fetch as expoFetch } from 'expo/fetch';
 import * as SecureStore from 'expo-secure-store';
 
 import { getOfflineTrails } from './offline-trails';
@@ -17,6 +19,53 @@ export type SessionUser = {
   id: string;
   name: string;
   email: string;
+  avatar_url?: string | null;
+  bio?: string | null;
+};
+
+export type SocialPost = {
+  id: string;
+  user_id: string;
+  photo_url: string;
+  caption: string;
+  place_name: string;
+  latitude: number;
+  longitude: number;
+  suggest_hike: boolean;
+  created_at: string;
+  author: { name: string; avatar_url: string | null };
+  like_count: number;
+  comment_count: number;
+  liked_by_me: boolean;
+};
+
+export type SocialPostComment = {
+  id: string;
+  post_id: string;
+  user_id: string;
+  body: string;
+  created_at: string;
+  author: { name: string; avatar_url: string | null };
+};
+
+export type SocialProfile = SessionUser & {
+  avatar_url: string | null;
+  bio: string | null;
+};
+
+export type NewSocialPost = {
+  photoUrl: string;
+  caption: string;
+  placeName: string;
+  latitude: number;
+  longitude: number;
+  suggestHike: boolean;
+};
+
+export type ProfileChanges = {
+  name?: string;
+  bio?: string | null;
+  avatarUrl?: string | null;
 };
 
 export type TrailReview = {
@@ -369,6 +418,10 @@ async function saveSession(response: { token: string; user: SessionUser }) {
   return response.user;
 }
 
+async function saveProfileSessionUser(user: SessionUser) {
+  await SecureStore.setItemAsync(USER_KEY, JSON.stringify(user));
+}
+
 export async function login(email: string, password: string) {
   const response = await request<{ token: string; user: SessionUser }>('/api/login', {
     method: 'POST',
@@ -383,6 +436,134 @@ export async function register(name: string, email: string, password: string) {
     body: JSON.stringify({ name, email, password }),
   });
   return saveSession(response);
+}
+
+export async function changePassword(currentPassword: string, newPassword: string) {
+  return request<{ changed: boolean }>('/api/password', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  }, true);
+}
+
+export async function getSocialProfile(): Promise<SocialProfile> {
+  const response = await request<{ profile: SocialProfile }>('/api/profile', {}, true);
+  await saveProfileSessionUser(response.profile);
+  return response.profile;
+}
+
+export async function updateSocialProfile(changes: ProfileChanges): Promise<SocialProfile> {
+  const response = await request<{ profile: SocialProfile }>('/api/profile', {
+    method: 'PATCH',
+    body: JSON.stringify({
+      ...(changes.name !== undefined ? { name: changes.name } : {}),
+      ...(changes.bio !== undefined ? { bio: changes.bio } : {}),
+      ...(changes.avatarUrl !== undefined ? { avatar_url: changes.avatarUrl } : {}),
+    }),
+  }, true);
+  await saveProfileSessionUser(response.profile);
+  return response.profile;
+}
+
+export async function uploadSocialPhoto(imageUri: string): Promise<string> {
+  const token = await getToken();
+  if (!token) throw new ApiError('Please log in to upload a photo.', 401);
+  const file = new File(imageUri);
+  if (!file.exists || file.size === null || file.size < 4) {
+    throw new ApiError('The selected image could not be read. Please choose it again.');
+  }
+  if (file.size > 3 * 1024 * 1024) {
+    throw new ApiError('The processed photo is larger than 3 MB. Choose a smaller image.');
+  }
+
+  let response: Response;
+  try {
+    response = await expoFetch(`${API_BASE_URL.replace(/\/$/, '')}/api/upload`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'image/jpeg',
+      },
+      body: file,
+    });
+  } catch (error) {
+    console.error('Trailhead photo upload failed:', error);
+    throw new ApiError('Could not reach the photo upload service. Check your connection and retry.');
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new ApiError(`The photo service returned an unreadable response (HTTP ${response.status}).`, response.status);
+  }
+  if (!response.ok) {
+    throw new ApiError(
+      getErrorMessage(body) ?? `Photo upload failed (${response.status}). Please try again.`,
+      response.status
+    );
+  }
+  if (typeof body !== 'object' || body === null || !('url' in body) || typeof body.url !== 'string') {
+    throw new ApiError('The photo service did not return a valid image URL.');
+  }
+  return body.url;
+}
+
+export async function getSocialPosts(cursor?: string | null) {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+  return request<{ posts: SocialPost[]; next_cursor: string | null }>(`/api/posts${query}`, {}, true);
+}
+
+export async function createSocialPost(input: NewSocialPost) {
+  return request<{ post: SocialPost }>('/api/posts', {
+    method: 'POST',
+    body: JSON.stringify({
+      photo_url: input.photoUrl,
+      caption: input.caption,
+      place_name: input.placeName,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      suggest_hike: input.suggestHike,
+    }),
+  }, true);
+}
+
+export async function deleteSocialPost(postId: string) {
+  return request<{ deleted: boolean }>(`/api/posts/${encodeURIComponent(postId)}`, {
+    method: 'DELETE',
+  }, true);
+}
+
+export async function likeSocialPost(postId: string) {
+  return request<{ liked: boolean; like_count: number }>(
+    `/api/posts/${encodeURIComponent(postId)}/like`,
+    { method: 'POST' },
+    true
+  );
+}
+
+export async function unlikeSocialPost(postId: string) {
+  return request<{ liked: boolean; like_count: number }>(
+    `/api/posts/${encodeURIComponent(postId)}/like`,
+    { method: 'DELETE' },
+    true
+  );
+}
+
+export async function getSocialPostComments(postId: string) {
+  return request<{ comments: SocialPostComment[] }>(
+    `/api/posts/${encodeURIComponent(postId)}/comments`,
+    {},
+    true
+  );
+}
+
+export async function createSocialPostComment(postId: string, body: string) {
+  return request<{ comment: SocialPostComment }>(
+    `/api/posts/${encodeURIComponent(postId)}/comments`,
+    { method: 'POST', body: JSON.stringify({ body }) },
+    true
+  );
 }
 
 function toTrail(row: ApiTrail): Trail {
