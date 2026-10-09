@@ -5,6 +5,7 @@
   },
   "build": {
     "preview": {
+      "node": "24.11.1",
       "distribution": "internal",
       "android": {
         "buildType": "apk"
