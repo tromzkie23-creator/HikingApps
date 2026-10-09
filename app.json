@@ -1,22 +1,38 @@
 {
   "expo": {
-    "name": "HikingApps",
-    "slug": "HikingApps",
+    "name": "Trailhead",
+    "slug": "trailhead",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "hikingapps",
+    "scheme": "trailhead",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.jerome.trailhead",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#F2F4EF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.CAMERA"
+      ],
+      "blockedPermissions": [
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
+      ],
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -34,17 +50,17 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Trailhead to use a photo as your profile picture.",
-          "cameraPermission": false,
+          "photosPermission": "Allow Trailhead to select photos to share hiking memories and update your profile picture.",
+          "cameraPermission": "Allow Trailhead to take photos for hiking posts and your profile picture.",
           "microphonePermission": false
         }
       ],
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#F2F4EF",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 160
         }
       ],
       "expo-secure-store"
@@ -56,6 +72,9 @@
     "extra": {
       "router": {
         "root": "HikingApp/app"
+      },
+      "eas": {
+        "projectId": "626e3441-ce8b-4553-9069-3d45e0b3893d"
       }
     }
   }

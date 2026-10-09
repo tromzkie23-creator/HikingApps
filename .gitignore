@@ -17,6 +17,7 @@ expo-env.d.ts
 *.p12
 *.key
 *.mobileprovision
+*.keystore
 
 # Metro
 .metro-health-check*
@@ -32,6 +33,7 @@ yarn-error.*
 
 # local env files
 .env
+.env.local
 .env.*
 !.env.example
 .env*.local
@@ -45,5 +47,4 @@ example
 /ios
 /android
 
-.vercel
-.env*
+.vercel/
